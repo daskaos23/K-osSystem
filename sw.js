@@ -3,7 +3,7 @@
    Share-Target ("Teilen mit -> K-OS") legt Dateien in IndexedDB ab und
    oeffnet die Files-Linse. Dropbox-/Meta-Aufrufe werden NIE gecacht. */
 
-const CACHE = 'kos-suite-v1';
+const CACHE = 'kos-suite-v2';
 const SHELL = [
   './',
   './index.html',
@@ -12,7 +12,10 @@ const SHELL = [
   './draw.html',
   './vektor.html',
   './manifest.json',
-  './logo.png',
+  './brand-wordmark.png',
+  './brand-mark.png',
+  './brand-mark-white.png',
+  './brand-sign.png',
   './icon-192.png',
   './icon-512.png',
   './icon-maskable-512.png'
@@ -52,6 +55,10 @@ function idbPutShared(key, val) {
     req.onerror = () => rej(req.error);
   });
 }
+
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
