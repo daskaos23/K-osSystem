@@ -124,7 +124,7 @@ body{background:var(--bg);color:var(--tx);font-family:'Roboto',system-ui,sans-se
       <div class="homein">
         <div class="mast">
           <img class="word" src="brand-wordmark.png" alt="K-OS">
-          <div class="sub">Ein System &middot; Vier Sichten</div>
+          <div class="sub">Ein System &middot; Vier Sichten &middot; <span id="ver"></span></div>
         </div>
         <div class="warnbox" id="warn-redirect">
           <b>Hinweis:</b> Diese Adresse wurde mit einem Login-Code aufgerufen. Der Login geh&ouml;rt zu den Modulen &mdash;
@@ -156,6 +156,9 @@ body{background:var(--bg);color:var(--tx);font-family:'Roboto',system-ui,sans-se
 <div class="update" id="update"><span>Eine neue K-OS-Version ist bereit.</span><button id="btn-update">Neu starten</button></div>
 <script>
 'use strict';
+var KOS_VERSION = 'v4';
+document.getElementById('ver').textContent = KOS_VERSION;
+document.title = 'K-OS \u00b7 ' + KOS_VERSION;
 /* ══════════ LINSEN ══════════ */
 var IC = {
   folder:'<path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',

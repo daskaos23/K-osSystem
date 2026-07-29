@@ -81,6 +81,37 @@
   .layer-row .lvis{font-size:15px;}
   #guideGrid{display:flex;flex-wrap:wrap;gap:6px;}
   #guideGrid .btn.on{background:#00C2D1;color:#04282b;border-color:#00C2D1;}
+
+/* ══════════ K-OS WERKZEUGRING (Prototyp VII) ══════════ */
+#kosring{position:fixed;inset:0;z-index:9000;pointer-events:none;font-family:system-ui,sans-serif}
+#kosring *{box-sizing:border-box}
+.kr-core{position:absolute;width:54px;height:54px;border-radius:50%;pointer-events:auto;cursor:grab;
+  background:#0d1316;border:2.5px solid #26d97a;color:#26d97a;display:flex;align-items:center;justify-content:center;
+  font-size:22px;box-shadow:0 6px 18px -6px rgba(0,0,0,.85);touch-action:none;user-select:none;-webkit-user-select:none}
+.kr-core:active{cursor:grabbing}
+.kr-core .kr-glyph{pointer-events:none;line-height:1}
+.kr-it{position:absolute;width:46px;height:46px;border-radius:50%;pointer-events:auto;cursor:pointer;
+  background:#14181c;border:1.5px solid #333c45;color:#eef3f6;display:flex;align-items:center;justify-content:center;
+  font-size:18px;box-shadow:0 5px 14px -6px rgba(0,0,0,.8);touch-action:none;user-select:none;-webkit-user-select:none;
+  transition:transform .16s ease,opacity .16s ease;opacity:0;transform:translate(-50%,-50%) scale(.4)}
+.kr-it.show{opacity:1}
+.kr-it.on{border-color:#26d97a;color:#26d97a}
+.kr-it.kr-all{background:#26d97a;color:#0a0a0a;border-color:#26d97a;font-weight:700;font-size:15px}
+.kr-it span{pointer-events:none;line-height:1}
+.kr-win{position:absolute;pointer-events:auto;min-width:250px;max-width:320px;max-height:70vh;overflow-y:auto;
+  background:#101418;border:1px solid #333c45;border-radius:14px;padding:12px 12px 10px;
+  box-shadow:0 18px 44px -14px rgba(0,0,0,.9);display:none}
+.kr-win.show{display:block}
+.kr-win h4{margin:8px 2px 6px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#66707a;font-weight:600}
+.kr-win h4:first-child{margin-top:0}
+.kr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.kr-cell{border:1px solid #232a30;border-radius:9px;background:#14181c;color:#c9d4da;padding:8px 2px 6px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;user-select:none;-webkit-user-select:none}
+.kr-cell:active{background:#1a2126}
+.kr-cell.on{border-color:#26d97a;color:#26d97a}
+.kr-cell .g{font-size:17px;line-height:1;pointer-events:none}
+.kr-cell .l{font-size:9px;letter-spacing:.03em;pointer-events:none;text-align:center}
+.kr-x{position:sticky;top:0;float:right;border:0;background:transparent;color:#66707a;font-size:16px;cursor:pointer;padding:0 2px}
 </style>
 </head>
 <body>
@@ -197,6 +228,7 @@
       <button class="btn" id="loadProj">📂 Laden …</button>
       <input type="file" id="fileInput" accept=".kosvec,application/json,.json" style="display:none">
       <div class="pk-label">K-OS Übergabe</div>
+      <button class="btn" id="kosRingBtn">◯ Werkzeugring ein/aus</button>
       <button class="btn" id="kosToStudio">→ An Studio übergeben</button>
       <button class="btn" id="kosToFiles">→ In Files ablegen</button>
       <div class="pk-row"><span class="pk-label" style="flex:1">Sichert alle Ebenen als Datei (Downloads-Ordner). Laden über die Datei-Auswahl.</span><button class="btn" id="fileClose">Fertig</button></div>
@@ -1405,6 +1437,7 @@ document.getElementById('test').onclick=function(){ hudOn=!hudOn; this.classList
 document.getElementById('png').onclick=()=>exportPNG();
 document.getElementById('kosToStudio').onclick=()=>{ toggleFile(false); exportPNG(b=>kosHoSend('studio',b)); };
 document.getElementById('kosToFiles').onclick=()=>{ toggleFile(false); exportPNG(b=>kosHoSend('files',b)); };
+document.getElementById('kosRingBtn').onclick=()=>{ toggleFile(false); toast(window.kosRingToggle()?'Werkzeugring an':'Werkzeugring aus'); };
 
 /* ---- PNG-Export ---- */
 // Rendert einen Welt-Rechteckbereich (1 Welt-Einheit = 1 px) auf weißen Grund.
@@ -1921,6 +1954,158 @@ function init(){
   setTimeout(()=>{ if(window.matchMedia('(pointer:coarse)').matches) toast('Stift zeichnet · 1 Finger schiebt · 2 Finger zoomen'); }, 500);
 }
 init();
+
+
+/* ══════════ K-OS WERKZEUGRING (Prototyp VII: Kern → Ring → Fenster) ══════════ */
+(function(){
+  var CFG = {"store": "kosring_vektor", "coreGlyph": "◯", "quick": [{"id": "mDraw", "g": "✏", "l": "Zeichnen"}, {"id": "brushBtn", "g": "✎", "l": "Spitze"}, {"id": "colorBtn", "g": "◉", "l": "Farbe"}, {"id": "mErase", "g": "⌫", "l": "Radierer"}, {"id": "selBtn", "g": "⤡", "l": "Auswahl"}, {"id": "pathBtn", "g": "✒", "l": "Kurve"}], "groups": [["Zeichnen", [{"id": "mDraw", "g": "✏", "l": "Zeichnen"}, {"id": "pathBtn", "g": "✒", "l": "Kurve"}, {"id": "fillBtn", "g": "🪣", "l": "Füllen"}, {"id": "brushBtn", "g": "✎", "l": "Spitze"}, {"id": "setBtn", "g": "⚙", "l": "Pinsel-Setup"}]], ["Auswahl", [{"id": "selBtn", "g": "⤡", "l": "Auswahl"}, {"id": "delSel", "g": "🗑", "l": "Löschen"}, {"id": "mPick", "g": "⊙", "l": "Pipette"}, {"id": "symBtn", "g": "✕", "l": "Symmetrie"}]], ["Ansicht", [{"id": "layerBtn", "g": "▤", "l": "Ebenen"}, {"id": "guideBtn", "g": "▱", "l": "Lineal"}, {"id": "rotBtn", "g": "⟳", "l": "Drehen"}, {"id": "fit", "g": "⟲", "l": "100 %"}, {"id": "undo", "g": "↶", "l": "Zurück"}]], ["Datei", [{"id": "fileBtn", "g": "≡", "l": "Datei"}, {"id": "png", "g": "⤓", "l": "PNG"}, {"id": "regionBtn", "g": "⬚", "l": "Bereich"}]]]};
+  var LS = CFG.store;
+  var st = { x: null, y: null, enabled: true, last: null };
+  try { var s = JSON.parse(localStorage.getItem(LS) || '{}');
+        if (typeof s.x === 'number') st.x = s.x;
+        if (typeof s.y === 'number') st.y = s.y;
+        if (s.enabled === false) st.enabled = false;
+        if (typeof s.last === 'string') st.last = s.last; } catch (e) {}
+  function persist(){ try { localStorage.setItem(LS, JSON.stringify(st)); } catch (e) {} }
+  function byId(id){ return document.getElementById(id); }
+
+  var root = document.createElement('div');
+  root.id = 'kosring';
+  var core = document.createElement('div');
+  core.className = 'kr-core';
+  core.title = 'K-OS Werkzeugring — tippen: Ring · ziehen: verschieben';
+  core.innerHTML = '<span class="kr-glyph"></span>';
+  root.appendChild(core);
+  var win = document.createElement('div');
+  win.className = 'kr-win';
+  root.appendChild(win);
+  document.body.appendChild(root);
+
+  var items = [];
+  function glyphOf(id){
+    for (var i = 0; i < CFG.quick.length; i++) if (CFG.quick[i].id === id) return CFG.quick[i].g;
+    for (var gi = 0; gi < CFG.groups.length; gi++){
+      var its = CFG.groups[gi][1];
+      for (var j = 0; j < its.length; j++) if (its[j].id === id) return its[j].g;
+    }
+    return null;
+  }
+  function setCoreGlyph(){
+    core.querySelector('.kr-glyph').textContent = (st.last && glyphOf(st.last)) || CFG.coreGlyph;
+  }
+  function clampCore(){
+    var m = 8, w = 54;
+    var maxX = (window.innerWidth || 800) - w - m, maxY = (window.innerHeight || 600) - w - m;
+    if (st.x === null) { st.x = maxX - 12; st.y = Math.round((window.innerHeight || 600) * 0.42); }
+    st.x = Math.min(Math.max(m, st.x), Math.max(m, maxX));
+    st.y = Math.min(Math.max(m, st.y), Math.max(m, maxY));
+    core.style.left = st.x + 'px'; core.style.top = st.y + 'px';
+  }
+  function ringOpen(){ return items.length > 0; }
+  function closeRing(){ items.forEach(function(el){ el.remove(); }); items = []; }
+  function closeWin(){ win.classList.remove('show'); }
+  function activate(id){
+    var b = byId(id);
+    if (!b) return;
+    b.click();
+    st.last = id; persist(); setCoreGlyph();
+  }
+  function mkItem(def, cx, cy, tx, ty, all){
+    var el = document.createElement('div');
+    el.className = 'kr-it' + (all ? ' kr-all' : '');
+    el.innerHTML = '<span>' + def.g + '</span>';
+    el.title = def.l;
+    var b = def.id ? byId(def.id) : null;
+    if (b && b.classList.contains('on')) el.classList.add('on');
+    el.style.left = cx + 'px'; el.style.top = cy + 'px';
+    el.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      if (all) { closeRing(); openWin(); return; }
+      closeRing();
+      activate(def.id);
+    });
+    root.appendChild(el);
+    requestAnimationFrame(function(){
+      el.classList.add('show');
+      el.style.transform = 'translate(-50%,-50%) translate(' + tx + 'px,' + ty + 'px) scale(1)';
+    });
+    items.push(el);
+  }
+  function openRing(){
+    closeWin();
+    var cx = st.x + 27, cy = st.y + 27, R = 84;
+    var n = CFG.quick.length;
+    for (var i = 0; i < n; i++){
+      var a = (Math.PI * 2 * i / n) - Math.PI / 2;
+      mkItem(CFG.quick[i], cx, cy, Math.cos(a) * R, Math.sin(a) * R, false);
+    }
+    mkItem({ g: 'Alle', l: 'Alle Werkzeuge' }, cx, cy, 0, R + 52, true);
+  }
+  function openWin(){
+    var html = '<button class="kr-x" title="Schließen">✕</button>';
+    CFG.groups.forEach(function(g){
+      html += '<h4>' + g[0] + '</h4><div class="kr-grid">';
+      g[1].forEach(function(it){
+        var b = byId(it.id);
+        html += '<div class="kr-cell' + (b && b.classList.contains('on') ? ' on' : '') + '" data-kr="' + it.id + '">' +
+                '<span class="g">' + it.g + '</span><span class="l">' + it.l + '</span></div>';
+      });
+      html += '</div>';
+    });
+    win.innerHTML = html;
+    var W = 280;
+    var wx = Math.min(Math.max(8, st.x - W - 14), (window.innerWidth || 800) - W - 8);
+    if (st.x < W + 30) wx = Math.min(st.x + 68, (window.innerWidth || 800) - W - 8);
+    win.style.left = Math.max(8, wx) + 'px';
+    win.style.top = Math.max(8, Math.min(st.y - 40, (window.innerHeight || 600) - 60)) + 'px';
+    win.classList.add('show');
+    win.querySelector('.kr-x').addEventListener('click', closeWin);
+    win.querySelectorAll('[data-kr]').forEach(function(c){
+      c.addEventListener('click', function(){ closeWin(); activate(c.getAttribute('data-kr')); });
+    });
+  }
+
+  /* Kern: Tap = Ring auf/zu · Drag = verschieben */
+  var drag = null;
+  core.addEventListener('pointerdown', function(e){
+    e.preventDefault();
+    drag = { sx: e.clientX, sy: e.clientY, ox: st.x, oy: st.y, moved: false };
+    try { core.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  core.addEventListener('pointermove', function(e){
+    if (!drag) return;
+    var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 8) { drag.moved = true; closeRing(); closeWin(); }
+    if (drag.moved) { st.x = drag.ox + dx; st.y = drag.oy + dy; clampCore(); }
+  });
+  core.addEventListener('pointerup', function(e){
+    if (!drag) return;
+    var moved = drag.moved; drag = null;
+    if (moved) { persist(); return; }
+    if (win.classList.contains('show')) { closeWin(); return; }
+    if (ringOpen()) closeRing(); else openRing();
+  });
+  core.addEventListener('pointercancel', function(){ if (drag && drag.moved) persist(); drag = null; });
+
+  /* Tippen irgendwo anders schließt Ring/Fenster */
+  document.addEventListener('pointerdown', function(e){
+    if (root.contains(e.target)) return;
+    if (ringOpen()) closeRing();
+    if (win.classList.contains('show')) closeWin();
+  }, true);
+  window.addEventListener('resize', clampCore);
+
+  function apply(){ root.style.display = st.enabled ? '' : 'none'; }
+  window.kosRingToggle = function(){
+    st.enabled = !st.enabled; persist(); apply();
+    if (!st.enabled) { closeRing(); closeWin(); }
+    return st.enabled;
+  };
+  window.kosRingEnabled = function(){ return st.enabled; };
+
+  clampCore(); setCoreGlyph(); apply();
+})();
+
 </script>
 </body>
 </html>

@@ -1063,7 +1063,7 @@
 
 <button id="fab" data-ico="plus" onclick="newProject()"></button>
 
-<div id="sheet-overlay" onclick="closeSheets()"></div>
+<div id="sheet-overlay" onclick="if (suppressClick) { suppressClick = false; return; } closeSheets()"></div>
 
 <div class="sheet" id="sheet-publish">
   <div class="sheet-handle"></div>
@@ -2725,16 +2725,23 @@ let currentFile = null;        /* { p, folder, name } */
 let uploadTarget = null;       /* { p, folder } */
 
 function attachLongPress(el, fn) {
-  let t = null, sx = 0, sy = 0;
+  let t = null, sx = 0, sy = 0, fired = false;
+  const trigger = () => {
+    if (fired) return;                     /* Timer + natives contextmenu: nur einmal ausloesen */
+    fired = true;
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 700);  /* Flag nie haengen lassen */
+    fn();
+  };
   el.addEventListener('contextmenu', e => {
     e.preventDefault();
     if (t) { clearTimeout(t); t = null; }
-    suppressClick = true;
-    fn();
+    trigger();
   });
   el.addEventListener('pointerdown', e => {
-    sx = e.clientX; sy = e.clientY;
-    t = setTimeout(() => { t = null; suppressClick = true; fn(); }, 500);
+    fired = false; sx = e.clientX; sy = e.clientY;
+    if (t) clearTimeout(t);
+    t = setTimeout(() => { t = null; trigger(); }, 500);
   });
   const cancel = () => { if (t) { clearTimeout(t); t = null; } };
   el.addEventListener('pointerup', cancel);
