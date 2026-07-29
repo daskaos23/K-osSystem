@@ -2451,6 +2451,72 @@ $('file-image').addEventListener('change', () => {
   rd.readAsDataURL(f);
 });
 
+/* ── K-OS Übergabe: Bilder aus Draw/Vektor empfangen ── */
+let kosHoPending = null, kosHoTimer = null;
+function kosHoTake(done) {
+  let req;
+  try { req = indexedDB.open('kos_handoff', 1); } catch (e) { done(null); return; }
+  req.onupgradeneeded = () => { const d = req.result; if (!d.objectStoreNames.contains('items')) d.createObjectStore('items'); };
+  req.onsuccess = () => {
+    const d = req.result, t = d.transaction('items', 'readwrite'), st = t.objectStore('items');
+    const g = st.getAllKeys();
+    g.onsuccess = () => {
+      const keys = (g.result || []).slice().sort();
+      if (!keys.length) { d.close(); done(null); return; }
+      const r = st.get(keys[keys.length - 1]);
+      r.onsuccess = () => {
+        const v = r.result || null;
+        keys.forEach(k => st.delete(k));
+        t.oncomplete = () => { d.close(); done(v); };
+        t.onerror = () => { d.close(); done(v); };
+      };
+      r.onerror = () => { d.close(); done(null); };
+    };
+    g.onerror = () => { d.close(); done(null); };
+  };
+  req.onerror = () => done(null);
+}
+function kosHoInsert(item) {
+  if (!item || !item.blob) return;
+  if (!doc) {
+    kosHoPending = item;
+    toast('Übergabe empfangen — wird eingefügt, sobald ein Dokument offen ist');
+    if (!kosHoTimer) kosHoTimer = setInterval(() => {
+      if (doc && kosHoPending) { const it = kosHoPending; kosHoPending = null; clearInterval(kosHoTimer); kosHoTimer = null; kosHoInsert(it); }
+    }, 1200);
+    return;
+  }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = doc.w * 0.6, maxH = doc.h * 0.6;
+      const s = Math.min(1, maxW / img.width, maxH / img.height);
+      const w = Math.round(img.width * s), h = Math.round(img.height * s);
+      const el = {
+        id: uid(), type: 'image', x: doc.w / 2 - w / 2, y: doc.h / 2 - h / 2, w, h,
+        rot: 0, opacity: 1, hidden: false, locked: false, blend: 'normal',
+        sh: 0, shX: 0, shY: 10, shBlur: 24, shCol: '#000000', shAlpha: 35,
+        radius: 0, round: 0, adj: { bri: 100, con: 100, sat: 100, hue: 0, sep: 0, gray: 0, blur: 0 },
+        iz: 1, ix: 50, iy: 50, izx: 1, izy: 1,
+        src: rd.result, fit: 'cover', natW: img.width, natH: img.height
+      };
+      els().push(el);
+      board.appendChild(buildElNode(el));
+      select(el.id);
+      pushHistory(); renderPanel();
+      toast('Übergabe eingefügt' + (item.from ? ' — aus K-OS ' + (item.from === 'draw' ? 'Draw' : 'Vektor') : ''));
+    };
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(item.blob);
+}
+window.addEventListener('message', ev => {
+  if (ev.origin !== location.origin) return;
+  if (!ev.data || ev.data.type !== 'kos-handoff-receive') return;
+  kosHoTake(item => { if (item) kosHoInsert(item); });
+});
+
 /* ── Werkzeuge ── */
 function setTool(t) {
   tool = t;

@@ -362,6 +362,9 @@ return { id:uid(), name:name||'Ebene', visible:true, opacity:1, blend:'source-ov
   <div class="pk-row"><button class="btn" id="fileNew" style="flex:1">🗋 Neues Dokument…</button></div>
   <div class="pk-label">Export</div>
   <div class="pk-row"><button class="btn" id="fileExpPng" style="flex:1">⤓ PNG</button><button class="btn" id="fileExpJpg" style="flex:1">⤓ JPG</button></div>
+  <div class="pk-label">K-OS Übergabe</div>
+  <div class="pk-row"><button class="btn" id="kosToStudio" style="flex:1">→ An Studio übergeben</button></div>
+  <div class="pk-row"><button class="btn" id="kosToFiles" style="flex:1">→ In Files ablegen</button></div>
   <div class="pk-row"><span style="font-size:12px; color:var(--mut); flex:1">Gesten: 3 Finger runter = Projekt speichern · hoch = JPG</span><button class="btn" id="fileClose">Fertig</button></div>
   <input type="file" id="fileInput" accept=".kosdraw,application/json" style="display:none">
 </div>
@@ -3587,6 +3590,37 @@ async function tlToggle(){
   }catch(err){ showError('Zeitraffer: '+(err&&err.message||err)); tl=null; btn.classList.remove('rec'); }
 }
 
+
+/* ---- K-OS Übergabe (nur innerhalb der K-OS App) ---- */
+var KOSHO_FROM='draw';
+function kosHoInShell(){ try{ return window.top !== window.self; }catch(e){ return true; } }
+function kosHoName(){ var d=new Date();
+  return 'kos-draw-'+d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'-'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0')+'.png'; }
+function kosHoPut(db, stores, store, key, val, done, fail){
+  var req = indexedDB.open(db, 1);
+  req.onupgradeneeded = function(){ var d=req.result; stores.forEach(function(s){ if(!d.objectStoreNames.contains(s)) d.createObjectStore(s); }); };
+  req.onsuccess = function(){
+    var d=req.result, t=d.transaction(store,'readwrite');
+    t.objectStore(store).put(val, key);
+    t.oncomplete = function(){ d.close(); done&&done(); };
+    t.onerror = function(){ d.close(); fail&&fail(t.error); };
+  };
+  req.onerror = function(){ fail&&fail(req.error); };
+}
+function kosHoSend(target, blob){
+  if(!kosHoInShell()){ toast('Übergabe nur innerhalb der K-OS App'); return; }
+  if(!blob){ toast('Übergabe fehlgeschlagen (kein Bild)'); return; }
+  var fail = function(){ toast('Übergabe fehlgeschlagen'); };
+  var done = function(){ try{ window.parent.postMessage({type:'kos-handoff', target:target}, location.origin); }catch(e){ fail(); } };
+  if(target==='files'){
+    kosHoPut('kosfiles', ['kv','thumbs','files','oplog','shared'], 'shared',
+      's'+Date.now()+'_h', {name:kosHoName(), type:'image/png', ts:Date.now(), blob:blob}, done, fail);
+  } else {
+    kosHoPut('kos_handoff', ['items'], 'items',
+      'h'+Date.now(), {name:kosHoName(), type:'image/png', ts:Date.now(), blob:blob, from:KOSHO_FROM}, done, fail);
+  }
+}
+
 /* ---- Export ---- */
 function exportPNG(){
   compositeDoc().toBlob(b=>{
@@ -3783,6 +3817,8 @@ document.getElementById('stabSl').oninput=e=>{ stabilizer=clamp((+e.target.value
 document.getElementById('fileBtn').onclick=()=>togglePop('filepop');
 document.getElementById('fileClose').onclick=()=>togglePop('filepop');
 document.getElementById('fileExpPng').onclick=()=>{ togglePop('filepop'); exportPNG(); };
+document.getElementById('kosToStudio').onclick=()=>{ togglePop('filepop'); compositeDoc().toBlob(b=>kosHoSend('studio',b),'image/png'); };
+document.getElementById('kosToFiles').onclick=()=>{ togglePop('filepop'); compositeDoc().toBlob(b=>kosHoSend('files',b),'image/png'); };
 document.getElementById('fileExpJpg').onclick=()=>{ togglePop('filepop'); exportJPG(); };
 document.getElementById('fileSave').onclick=()=>{ togglePop('filepop'); saveProject(); };
 document.getElementById('fileLoad').onclick=()=>document.getElementById('fileInput').click();

@@ -196,6 +196,9 @@
       <button class="btn" id="saveProj">💾 Speichern (.kosvec)</button>
       <button class="btn" id="loadProj">📂 Laden …</button>
       <input type="file" id="fileInput" accept=".kosvec,application/json,.json" style="display:none">
+      <div class="pk-label">K-OS Übergabe</div>
+      <button class="btn" id="kosToStudio">→ An Studio übergeben</button>
+      <button class="btn" id="kosToFiles">→ In Files ablegen</button>
       <div class="pk-row"><span class="pk-label" style="flex:1">Sichert alle Ebenen als Datei (Downloads-Ordner). Laden über die Datei-Auswahl.</span><button class="btn" id="fileClose">Fertig</button></div>
     </div>
 
@@ -1399,11 +1402,13 @@ document.getElementById('rotBtn').onclick=()=>rotateBy(90);
 document.getElementById('test').onclick=function(){ hudOn=!hudOn; this.classList.toggle('on',hudOn);
   const el=document.getElementById('hud'); el.style.display=hudOn?'block':'none';
   if(hudOn){ el.textContent='STIFT-TEST aktiv\nmit dem Stift aufsetzen…\ncanvas '+CV.width+'×'+CV.height; } };
-document.getElementById('png').onclick=exportPNG;
+document.getElementById('png').onclick=()=>exportPNG();
+document.getElementById('kosToStudio').onclick=()=>{ toggleFile(false); exportPNG(b=>kosHoSend('studio',b)); };
+document.getElementById('kosToFiles').onclick=()=>{ toggleFile(false); exportPNG(b=>kosHoSend('files',b)); };
 
 /* ---- PNG-Export ---- */
 // Rendert einen Welt-Rechteckbereich (1 Welt-Einheit = 1 px) auf weißen Grund.
-function exportRect(minX,minY,W,H){
+function exportRect(minX,minY,W,H,cb){
   try{
     W=Math.max(1,Math.round(W)); H=Math.max(1,Math.round(H));
     const tf=p=>({x:p.x-minX, y:p.y-minY});
@@ -1419,18 +1424,52 @@ function exportRect(minX,minY,W,H){
     const c=oc.getContext('2d');
     c.fillStyle='#ffffff'; c.fillRect(0,0,W,H);
     c.drawImage(acc,0,0);
-    oc.toBlob(b=>{ const u=URL.createObjectURL(b); const a=document.createElement('a');
+    oc.toBlob(b=>{
+      if(typeof cb==='function'){ cb(b); return; }
+      const u=URL.createObjectURL(b); const a=document.createElement('a');
       a.href=u; a.download='kos-zeichnung.png'; a.click(); setTimeout(()=>URL.revokeObjectURL(u),2000); toast('PNG exportiert ('+W+'×'+H+')'); });
   }catch(err){ showError('exportRect(): '+(err && (err.message||err))); }
 }
-function exportPNG(){
+function exportPNG(cb){
+  if(typeof cb!=='function') cb=undefined;
   let any=false, minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   for(const lay of layers){ if(!lay.visible) continue;
     for(const s of lay.strokes){ if(s.erase) continue; any=true; const pad=s.size;
       for(const p of s.pts){ minX=Math.min(minX,p.x-pad); minY=Math.min(minY,p.y-pad); maxX=Math.max(maxX,p.x+pad); maxY=Math.max(maxY,p.y+pad); } } }
-  if(!any){ toast('Nichts zu exportieren'); return; }
-  exportRect(minX,minY,maxX-minX,maxY-minY);
+  if(!any){ toast('Nichts zu exportieren'); if(cb) cb(null); return; }
+  exportRect(minX,minY,maxX-minX,maxY-minY,cb);
 }
+
+/* ---- K-OS Übergabe (nur innerhalb der K-OS App) ---- */
+var KOSHO_FROM='vektor';
+function kosHoInShell(){ try{ return window.top !== window.self; }catch(e){ return true; } }
+function kosHoName(){ var d=new Date();
+  return 'kos-vektor-'+d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'-'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0')+'.png'; }
+function kosHoPut(db, stores, store, key, val, done, fail){
+  var req = indexedDB.open(db, 1);
+  req.onupgradeneeded = function(){ var d=req.result; stores.forEach(function(s){ if(!d.objectStoreNames.contains(s)) d.createObjectStore(s); }); };
+  req.onsuccess = function(){
+    var d=req.result, t=d.transaction(store,'readwrite');
+    t.objectStore(store).put(val, key);
+    t.oncomplete = function(){ d.close(); done&&done(); };
+    t.onerror = function(){ d.close(); fail&&fail(t.error); };
+  };
+  req.onerror = function(){ fail&&fail(req.error); };
+}
+function kosHoSend(target, blob){
+  if(!kosHoInShell()){ toast('Übergabe nur innerhalb der K-OS App'); return; }
+  if(!blob){ toast('Übergabe fehlgeschlagen (kein Bild)'); return; }
+  var fail = function(){ toast('Übergabe fehlgeschlagen'); };
+  var done = function(){ try{ window.parent.postMessage({type:'kos-handoff', target:target}, location.origin); }catch(e){ fail(); } };
+  if(target==='files'){
+    kosHoPut('kosfiles', ['kv','thumbs','files','oplog','shared'], 'shared',
+      's'+Date.now()+'_h', {name:kosHoName(), type:'image/png', ts:Date.now(), blob:blob}, done, fail);
+  } else {
+    kosHoPut('kos_handoff', ['items'], 'items',
+      'h'+Date.now(), {name:kosHoName(), type:'image/png', ts:Date.now(), blob:blob, from:KOSHO_FROM}, done, fail);
+  }
+}
+
 
 /* ====================================================================
    FARBWÄHLER + FARB-BIBLIOTHEKEN

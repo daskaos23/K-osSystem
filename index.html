@@ -141,6 +141,8 @@ body{background:var(--bg);color:var(--tx);font-family:'Roboto',system-ui,sans-se
           Zoom und Werkzeuge gehen dabei nicht verloren. <b>Files</b> und <b>Studio</b> teilen sich dieselbe
           Dropbox-Verbindung (einmal in Files anmelden gen&uuml;gt). Wechsel jederzeit &uuml;ber den Farbstreifen links;
           das K oben f&uuml;hrt zur&uuml;ck zum Start. Tastatur: <b>1&ndash;4</b> Linsen, <b>0</b> Start.
+          <b>&Uuml;bergaben:</b> In Draw und Vektor findest du im Datei-Men&uuml; &bdquo;An Studio &uuml;bergeben&ldquo;
+          (f&uuml;gt das Bild dort als Element ein) und &bdquo;In Files ablegen&ldquo; (landet in der Ablage-Abfrage).
         </div>
         <div class="sign"><img src="brand-sign.png" alt=""></div>
       </div>
@@ -223,7 +225,7 @@ function ensureFrame(k, extraQuery){
     {files:'--files',studio:'--studio',draw:'--draw',vektor:'--vektor'}[k]));
   document.getElementById('loading-t').textContent = 'K-OS ' + LENS[k].nm + ' l\u00e4dt';
   loading.classList.add('show');
-  f.addEventListener('load', function(){ loading.classList.remove('show'); });
+  f.addEventListener('load', function(){ f.dataset.loaded = '1'; loading.classList.remove('show'); });
   stage.appendChild(f);
   frames[k] = f;
   return f;
@@ -274,6 +276,27 @@ refreshStatus();
   var m = /lens=(files|studio|draw|vektor)/.exec(location.hash || '');
   if (m) { go(m[1]); return; }
 })();
+
+/* ══════════ ÜBERGABEN ZWISCHEN LINSEN ══════════ */
+window.addEventListener('message', function(ev){
+  if (ev.origin !== location.origin) return;
+  var d = ev.data;
+  if (!d || d.type !== 'kos-handoff') return;
+  var fromUs = false;
+  for (var k in frames) { if (frames[k].contentWindow === ev.source) { fromUs = true; break; } }
+  if (!fromUs) return;
+  var t = d.target;
+  if (t === 'files') {
+    if (frames.files) { frames.files.dataset.loaded = ''; frames.files.src = 'files.html?share=1'; go('files'); }
+    else go('files', '?share=1');
+  } else if (t === 'studio' || t === 'draw' || t === 'vektor') {
+    go(t);
+    var f = frames[t];
+    var send = function(){ try { f.contentWindow.postMessage({ type: 'kos-handoff-receive' }, location.origin); } catch (e) {} };
+    if (f.dataset.loaded === '1') send();
+    else f.addEventListener('load', send, { once: true });
+  }
+});
 
 /* ══════════ TASTATUR (nur Shell-Fokus) ══════════ */
 document.addEventListener('keydown', function(e){
