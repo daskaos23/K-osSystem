@@ -13,7 +13,9 @@
   --files:#26b9d9; --studio:#f2af0d; --draw:#d92626; --drawtx:#e05050; --vektor:#26d97a;
   --ac:#e05050;
 }
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;
+  -webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+input,textarea,select{-webkit-user-select:text;user-select:text}
 html,body{height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-serif;font-weight:400;
   -webkit-font-smoothing:antialiased;touch-action:none;user-select:none;-webkit-user-select:none}
@@ -193,6 +195,9 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
   border:1px solid var(--line2);color:var(--tx3);font-size:8px;display:none;align-items:center;justify-content:center}
 .chip:hover .st{display:flex}
 .chip .st.on{display:flex;color:var(--ac);border-color:var(--ac)}
+#pickDot{position:absolute;width:34px;height:34px;border-radius:50%;border:3px solid #fff;
+  box-shadow:0 2px 12px rgba(0,0,0,.7);transform:translate(-50%,-150%);pointer-events:none;
+  z-index:78;display:none}
 /* Stift-Diagnose */
 #diagBox{position:absolute;left:10px;top:10px;max-width:420px;background:#0d1114ee;border:1px solid var(--line2);
   border-radius:9px;padding:8px 10px;font:10.5px 'JetBrains Mono',monospace;color:var(--tx2);
@@ -280,6 +285,7 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
       <div id="dbxFiles"></div>
       <input type="file" id="kosFile" accept=".kos,.zip" style="display:none">
     </div>
+    <div id="pickDot"></div>
     <div id="diagBox"></div>
     <div id="toast" class="mono"></div>
   </div>
@@ -904,7 +910,7 @@ var painting=false, strokePid=null;
 /* ── Stiftkanäle ───────────────────────────────────────────────── */
 var prevTool={draw:'brush',vektor:'pen',studio:'text'};
 var lastBtns=0, hoverBtns=0, strokeMaxBtns=0, b1LastRise=0, penGuard=0;
-var lastPress=0, lastTilt=0;
+var lastPress=0, lastTilt=0, lastPtrType='';
 function isPenBtn(e){
   if(e.pointerType==='touch') return false;
   return e.button===5||e.button===2||((e.buttons&2)!==0)||((e.buttons&4)!==0);
@@ -912,6 +918,7 @@ function isPenBtn(e){
 function penErase(e){ return e.pointerType==='pen'&&((e.buttons&32)===32); }  /* Radierer-Ende des Stifts */
 function trackButtons(e,src){
   if(e.pointerType!=='pen'&&e.pointerType!=='mouse') return;
+  lastPtrType=e.pointerType;          /* Stift schwebt bereits -> Ersatzkanäle dürfen wieder umschalten */
   var prev=lastBtns;
   if(e.buttons!==prev) diag(src+' buttons '+prev+' \u2192 '+e.buttons+(typeof e.button==='number'?' (button '+e.button+')':''));
   lastBtns=e.buttons;
@@ -949,7 +956,23 @@ function penBtnClick(quelle){
 if('onpointerrawupdate' in stage) stage.addEventListener('pointerrawupdate',function(e){ trackButtons(e,'raw  '); });
 stage.addEventListener('pointerenter',function(e){ trackButtons(e,'hover'); });
 stage.addEventListener('pointerleave',function(e){ if(e.pointerType==='pen'&&!painting) hoverBtns=0; });
-stage.addEventListener('contextmenu',function(e){ e.preventDefault(); penBtnClick('contextmenu'); });
+/* Langes Drücken mit dem Finger löst auf Android das Kontextmenü aus —
+   das wird unterdrückt und darf den Radierer nicht umschalten.        */
+document.addEventListener('contextmenu',function(e){
+  e.preventDefault();
+  if(touchList().length||lastPtrType==='touch') return;   /* Finger: nur wegdrücken */
+  penBtnClick('contextmenu');
+},true);
+document.addEventListener('selectstart',function(e){
+  if(e.target&&e.target.tagName==='INPUT') return;
+  e.preventDefault();
+},true);
+$('stagewrap').addEventListener('touchstart',function(e){
+  if(e.target&&e.target.closest&&e.target.closest('input,select,textarea')) return;
+  e.preventDefault();                                     /* verhindert Auswahl-/Lupen-Menü beim Halten */
+},{passive:false});
+$('stagewrap').addEventListener('touchmove',function(e){ e.preventDefault(); },{passive:false});
+$('stagewrap').addEventListener('dragstart',function(e){ e.preventDefault(); });
 $('stagewrap').addEventListener('auxclick',function(e){
   if(e.button===1||e.button===2||e.button===5){ e.preventDefault(); penBtnClick('auxclick'); }
 });
@@ -1041,27 +1064,43 @@ function updateFour(){
   }
 }
 function startPick1(){
-  touchMode='pick1';
   var p=touchList()[0]; if(!p) return;
+  touchMode='pick1';
   pick1={x:p.x,y:p.y};
   pickAt(s2w(p.x,p.y));
-  toast('Farbe aufnehmen \u2014 Finger schieben, dann loslassen');
+  showPickDot(p.x,p.y);
+  toast('Pipette \u2014 Finger schieben, dann loslassen');
 }
 function updatePick1(){
   var p=touchList()[0]; if(!p||!pick1) return;
   pick1.x=p.x; pick1.y=p.y;
   pickAt(s2w(p.x,p.y));
+  showPickDot(p.x,p.y);
 }
+function showPickDot(x,y){
+  var el=$('pickDot');
+  el.style.display='block';
+  el.style.left=x+'px'; el.style.top=y+'px';
+  el.style.background=color;
+}
+function hidePickDot(){ $('pickDot').style.display='none'; }
 function fingerBegin(){
-  if(!fingerDraw) return;
+  if(!fingerDraw||fingerDraw.active) return;
   fingerDraw.active=true;
-  beginStroke(s2w(fingerDraw.x,fingerDraw.y),0.85,false,fingerDraw.id);
-  toast('Finger zeichnet');
+  var l=activeLayer();
+  if(!l||l.typ!=='pixel'){ toast('Wischfinger gibt es in der Pixel-Linse'); fingerDraw=null; touchMode='ignore'; return; }
+  if(l.vorlage){ toast('\u201E'+l.name+'\u201C ist eine Vorlage'); fingerDraw=null; touchMode='ignore'; return; }
+  var pt=s2w(fingerDraw.x,fingerDraw.y);
+  drag={kind:'fx',l:l,fx:'smudge',last:pt,start:pt,id:fingerDraw.id};
+  painting=true; strokePid=fingerDraw.id;
+  fxDab(l,pt,0.85); req();
+  toast('Wischfinger');
 }
 
 /* ══════════ POINTER-VERTEILUNG ══════════ */
 stage.addEventListener('pointerdown',function(e){
   e.preventDefault();
+  lastPtrType=e.pointerType;
   var r=stage.getBoundingClientRect();
   var l={x:e.clientX-r.left,y:e.clientY-r.top};
   pointers.set(e.pointerId,{x:l.x,y:l.y,type:e.pointerType});
@@ -1098,8 +1137,10 @@ stage.addEventListener('pointerdown',function(e){
   if(isPenBtn(e)&&!(e.pressure>0)){ penBtnClick('pointerdown'); return; }   /* Taste im Schweben: nur umschalten */
   radOnTouch();
   var pt=toDoc(e.clientX,e.clientY);
-  var latch=(e.pointerType==='pen')?hoverBtns:0;          /* Taste beim Aufsetzen gehalten = radieren */
-  var erase=penErase(e)||e.pointerType==='eraser'||((latch&2)===2)||((latch&4)===4);
+  /* Die Stifttaste schaltet um (siehe penBtnClick) — ein „halten und
+     aufsetzen"-Sonderweg ist ausdrücklich nicht gewünscht. Nur das
+     umgedrehte Stiftende radiert unmittelbar.                        */
+  var erase=penErase(e)||e.pointerType==='eraser';
   var dbl=(Date.now()-lastTap.t<380&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<26);
   lastTap={t:Date.now(),x:e.clientX,y:e.clientY};
   try{ stage.setPointerCapture(e.pointerId); }catch(err){}
@@ -1155,7 +1196,10 @@ function onPointerUp(e){
       pan=null; touchMode=m>0?'ignore':null;
     } else if(touchMode==='pick1'){
       pick1=null; touchMode=m>0?'ignore':null;
+      hidePickDot();
       pushRecentCol(color); renderSwatches();
+      if(typeof saveFarben==='function') saveFarben();
+      toast('Farbe: '+String(color).toUpperCase());
     } else if(touchMode==='swipe3'){
       if(m===0){ evalSwipe3(); swipe3=null; touchMode=null; }
     } else if(touchMode==='zoom'){
