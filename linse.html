@@ -470,11 +470,14 @@ function drawLayer(g,l,asGhost){
   if(l.typ==='pfade'){
     l.data.paths.forEach(function(p){
       if(!p.pts.length) return;
-      g.strokeStyle=asGhost?'#7d8a86':p.col; g.lineWidth=p.w; g.lineCap='round'; g.lineJoin='round';
-      g.beginPath(); g.moveTo(p.pts[0].x,p.pts[0].y);
-      for(var i=1;i<p.pts.length;i++) g.lineTo(p.pts[i].x,p.pts[i].y);
-      if(p.closed) g.closePath();
-      g.stroke();
+      if(typeof paintPath==='function') paintPath(g,p,asGhost);
+      else {
+        g.strokeStyle=asGhost?'#7d8a86':p.col; g.lineWidth=p.w; g.lineCap='round'; g.lineJoin='round';
+        g.beginPath(); g.moveTo(p.pts[0].x,p.pts[0].y);
+        for(var i=1;i<p.pts.length;i++) g.lineTo(p.pts[i].x,p.pts[i].y);
+        if(p.closed) g.closePath();
+        g.stroke();
+      }
     });
     return;
   }
@@ -690,7 +693,10 @@ function setTool(t){
 function tool(){ return toolByLens[lens]; }
 function syncTool(){
   var d=TOOLDEF[tool()]||TOOLDEF.brush;
-  $('toolG').textContent=d.g; $('toolNm').textContent=d.nm;
+  $('toolG').textContent=d.g;
+  var t=tool();
+  var showTip=(t==='brush'||t==='pen')&&typeof curBrush==='function';
+  $('toolNm').textContent=showTip?curBrush().name:d.nm;
   $('colDot').style.background=color;
   $('cmdDot').style.background=color;
 }
@@ -887,7 +893,9 @@ function smoothPts(pts,amt){
   var k=Math.min(0.92,amt/110), out=[pts[0]];
   for(var i=1;i<pts.length;i++){
     var pr=out[i-1];
-    out.push({x:pr.x+(pts[i].x-pr.x)*(1-k), y:pr.y+(pts[i].y-pr.y)*(1-k)});
+    out.push({x:pr.x+(pts[i].x-pr.x)*(1-k),
+              y:pr.y+(pts[i].y-pr.y)*(1-k),
+              p:(pts[i].p==null?pr.p:pts[i].p)});      /* Druck bleibt am Punkt */
   }
   return out;
 }
@@ -936,8 +944,15 @@ function trackButtons(e,src){
   }
   if(painting&&e.buttons>strokeMaxBtns) strokeMaxBtns=e.buttons;
 }
+var lastTouchT=0;
+function touchActive(){ return touchList().length>0||Date.now()-lastTouchT<700; }
 function penBtnClick(quelle){
   var now=Date.now();
+  if(touchActive()){                           /* Finger auf dem Glas oder eben abgehoben:
+                                                  kein Kanal darf umschalten */
+    diag('Stifttaste verworfen \u2014 Finger aktiv ('+(quelle||'')+')');
+    return false;
+  }
   if(now-penGuard<150) return false;           /* derselbe Druck meldet sich mehrfach */
   penGuard=now;
   diag('Stifttaste \u2192 Radierer umschalten ('+(quelle||'pointer')+')');
@@ -956,13 +971,10 @@ function penBtnClick(quelle){
 if('onpointerrawupdate' in stage) stage.addEventListener('pointerrawupdate',function(e){ trackButtons(e,'raw  '); });
 stage.addEventListener('pointerenter',function(e){ trackButtons(e,'hover'); });
 stage.addEventListener('pointerleave',function(e){ if(e.pointerType==='pen'&&!painting) hoverBtns=0; });
-/* Langes Drücken mit dem Finger löst auf Android das Kontextmenü aus —
-   das wird unterdrückt und darf den Radierer nicht umschalten.        */
-document.addEventListener('contextmenu',function(e){
-  e.preventDefault();
-  if(touchList().length||lastPtrType==='touch') return;   /* Finger: nur wegdrücken */
-  penBtnClick('contextmenu');
-},true);
+/* Langes Drücken mit dem Finger löst auf Android das Kontextmenü aus.
+   Es wird ausnahmslos unterdrückt und ist KEIN Tastenkanal mehr —
+   die Seitentaste meldet sich zuverlässig über die Pointer-Bits.      */
+document.addEventListener('contextmenu',function(e){ e.preventDefault(); },true);
 document.addEventListener('selectstart',function(e){
   if(e.target&&e.target.tagName==='INPUT') return;
   e.preventDefault();
@@ -974,7 +986,9 @@ $('stagewrap').addEventListener('touchstart',function(e){
 $('stagewrap').addEventListener('touchmove',function(e){ e.preventDefault(); },{passive:false});
 $('stagewrap').addEventListener('dragstart',function(e){ e.preventDefault(); });
 $('stagewrap').addEventListener('auxclick',function(e){
-  if(e.button===1||e.button===2||e.button===5){ e.preventDefault(); penBtnClick('auxclick'); }
+  e.preventDefault();
+  if(touchActive()||lastPtrType==='touch') return;
+  if(e.button===1||e.button===2||e.button===5) penBtnClick('auxclick');
 });
 document.addEventListener('keydown',function(e){
   if(e.target&&(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')) return;
@@ -1107,6 +1121,7 @@ stage.addEventListener('pointerdown',function(e){
 
   /* ─ Finger ─ */
   if(e.pointerType==='touch'){
+    lastTouchT=Date.now();
     var n=touchList().length;
     if(painting) return;                                  /* Handballen wird ignoriert, während der Stift malt */
     if(touchMode==='draw') return;
@@ -1149,7 +1164,8 @@ stage.addEventListener('pointerdown',function(e){
 stage.addEventListener('pointermove',function(e){
   var p=pointers.get(e.pointerId);
   if(p){ var r=stage.getBoundingClientRect(); p.x=e.clientX-r.left; p.y=e.clientY-r.top; }
-  if(e.pointerType!=='touch') trackButtons(e,'move ');
+  if(e.pointerType==='touch') lastTouchT=Date.now();
+  else trackButtons(e,'move ');
 
   if(e.pointerType==='touch'){
     if(touchMode==='draw'){
@@ -1183,7 +1199,8 @@ stage.addEventListener('pointermove',function(e){
 });
 function onPointerUp(e){
   var wasTouch=(e.pointerType==='touch');
-  if(!wasTouch) trackButtons(e,'up   ');
+  if(wasTouch) lastTouchT=Date.now();
+  else trackButtons(e,'up   ');
   pointers.delete(e.pointerId);
   if(wasTouch){
     var m=touchList().length;
@@ -1247,8 +1264,9 @@ function moveStroke(pt,pres){
   if(!drag) return;
   if(drag.start) pt=snapPt(pt,drag.start);
   var k=drag.kind;
-  if(k==='paint'){ paintLine(drag.l,drag.last,pt,pres,drag.erase); drag.last=pt; req(); }
-  else if(k==='path'){ drag.pts.push(pt); req(); }
+  if(k==='brush'){ brushMove(pt,pres); drag.last=pt; }
+  else if(k==='paint'){ paintLine(drag.l,drag.last,pt,pres,drag.erase); drag.last=pt; req(); }
+  else if(k==='path'){ pt.p=pres; drag.pts.push(pt); req(); }
   else if(k==='node'){ var p=drag.l.data.paths[drag.idx]; if(p&&p.pts[drag.pt]){ p.pts[drag.pt]=pt; invalidate('pfade'); req(); } }
   else if(k==='moveEl'){ var el=drag.l.data.els[drag.idx];
     el.x=drag.orig.x+(pt.x-drag.start.x); el.y=drag.orig.y+(pt.y-drag.start.y);
@@ -1270,8 +1288,10 @@ function endStroke(){
     var sm=smoothPts(d.pts,VALS.vektor.v2.val);
     if(sm.length>1){
       var base=decimate(sm,1.6);
+      var bv=curBrush();
       mirrorPaths(base).forEach(function(pp){
-        d.l.data.paths.push({pts:pp,w:VALS.vektor.v1.val,col:color,closed:false});
+        d.l.data.paths.push({pts:pp,w:VALS.vektor.v1.val,col:color,closed:false,
+                             brush:bv.id,profil:bv.profil||'gleich'});
       });
       invalidate('pfade');
     }
@@ -1294,6 +1314,8 @@ function endStroke(){
     applyGradient(d.l,d.start,d.cur||d.start);
   } else if(d.kind==='movePix'){
     commitMovePix(d);
+  } else if(d.kind==='brush'){
+    endBrush();
   } else if(d.kind==='paint'||d.kind==='fx'){
     invalidate('pixel');
   } else if(d.kind==='node'||d.kind==='movePath'){
@@ -1321,9 +1343,7 @@ function beginPixel(t,l,pt,pres,pid){
     painting=true; strokePid=pid;
     fxDab(l,pt,pres); req(); return;
   }
-  drag={kind:'paint',l:l,erase:t==='eraser',last:pt,start:pt,id:pid};
-  painting=true; strokePid=pid;
-  paintDot(l,pt,pres,t==='eraser'); req();
+  beginBrush(l,pt,pres,t==='eraser',pid);
 }
 function fxDab(l,pt,pres){
   var g=l.data.cv.getContext('2d');
@@ -1494,7 +1514,11 @@ function mirrorPts(pt){
 }
 function mirrorPaths(pts){
   var n=mirrorPts(pts[0]).length, out=[];
-  for(var k=0;k<n;k++) out.push(pts.map(function(p){ return mirrorPts(p)[k]; }));
+  for(var k=0;k<n;k++) out.push(pts.map(function(p){
+    var q=mirrorPts(p)[k];
+    if(p.p!=null) q.p=p.p;
+    return q;
+  }));
   return out;
 }
 function setGuide(k,v){
@@ -1713,7 +1737,7 @@ function mkSat(t,x,y,size){
     var now=Date.now();
     var dbl=(now-rad.lastTap.t<420&&rad.lastTap.id===t);
     rad.lastTap={t:now,id:t};
-    if(dbl&&(t==='brush'||t==='pen'||t==='pick')){ openToolWin(t); return; }
+    if(dbl&&(t==='brush'||t==='pen'||t==='pick'||t==='curve')){ openToolWin(t); return; }
     if(isAct){ TOOLDEF[t].act(); rad.fan=null; rad.big=false; radRelayout(); return; }
     if(isCol){
       if(rad.fan==='color'){ rad.fan=null; } else { rad.fan='color'; rad.big=false; }
@@ -1815,9 +1839,11 @@ function buildFan(){
     var cols=pinned.concat(rest).slice(0,4).concat(['#111111','#ffffff']);
     items=cols.map(function(c){ return {kind:'col',v:c,pin:pinCols.indexOf(c)>=0}; });
   } else if(rad.fan==='tips'){
-    var pt2=pinTips.slice(0,5);
-    var rt=recentTips.filter(function(t){return pt2.indexOf(t)<0;});
-    items=pt2.concat(rt).slice(0,3).map(function(t){ return {kind:'tip',v:t,pin:pinTips.indexOf(t)>=0}; });
+    var av=brushList(curWhich()).map(function(x){return x.id;});
+    var pt2=pinTips.filter(function(t){return av.indexOf(t)>=0;}).slice(0,5);
+    var rt=recentTips.filter(function(t){return pt2.indexOf(t)<0&&av.indexOf(t)>=0;});
+    items=pt2.concat(rt,av).filter(function(v,i,a){return a.indexOf(v)===i;}).slice(0,3)
+      .map(function(t){ return {kind:'tip',v:t,pin:pinTips.indexOf(t)>=0}; });
     items.push({kind:'dots'});
   } else if(rad.fan==='ruler'){
     items=[{kind:'rul',v:'Gerade',r:'gerade'},{kind:'rul',v:'Winkel',r:'winkel'},{kind:'rul',v:'Persp.',r:'persp'},{kind:'dots'}];
@@ -1833,11 +1859,12 @@ function buildFan(){
       if(it.pin) el.innerHTML='<span class="pindot"></span>';
       el.addEventListener('click',function(ev){ ev.stopPropagation(); setColor(it.v); rad.fan=null; radRelayout(); });
     } else if(it.kind==='tip'){
-      el.textContent=it.v[0].toUpperCase();
-      if(it.v===curTip) el.classList.add('on');
+      var bo=getBrush(it.v,curWhich());
+      el.textContent=bo.name[0].toUpperCase();
+      if(it.v===curBrush().id) el.classList.add('on');
       if(it.pin) el.innerHTML+='<span class="pindot"></span>';
-      el.title=it.v;
-      el.addEventListener('click',function(ev){ ev.stopPropagation(); setTip(it.v); rad.fan=null; radRelayout(); });
+      el.title=bo.name;
+      el.addEventListener('click',function(ev){ ev.stopPropagation(); setBrush(it.v); rad.fan=null; radRelayout(); });
     } else if(it.kind==='rul'){
       el.textContent=it.v[0];
       el.title=it.v;
@@ -1856,11 +1883,7 @@ function buildFan(){
     radEl.appendChild(el);
   });
 }
-function setTip(t){
-  curTip=t;
-  recentTips=[t].concat(recentTips.filter(function(x){return x!==t;})).slice(0,8);
-  toast('Spitze: '+t);
-}
+function setTip(t){ if(typeof setBrush==='function') setBrush(t); else curTip=t; }
 
 /* ══════════ GROSSER RING (Alle) — klappt an Ort und Stelle auf ══════════ */
 /* Bildschirmrechteck des Blattes (dagegen wird gemessen, nicht gegen das Fenster) */
@@ -1932,11 +1955,12 @@ function openWin(id){
 function closeWins(){ WINS.forEach(function(w){ $(w).classList.remove('show'); }); }
 function openToolWin(t){
   if(t==='pick') openWin('winColor');
-  else if(t==='brush'||t==='pen') openWin('winBrush');
+  else if(t==='brush'||t==='pen'||t==='curve') openWin('winBrush');
   else if(t==='ruler') openWin('winRuler');
 }
 function buildColorWin(){ buildColorPanel(); }
-function buildBrushWin(){
+function buildBrushWin(){ buildBrushPanel(); }
+function buildBrushWinAlt(){
   var w=$('winBrush');
   var html='<button class="wx" data-close="winBrush">\u2715</button><h5>SPITZE \u00B7 '+(lens==='vektor'?'PROFIL':'PINSEL')+'</h5><div class="tiprow">';
   TIPS.forEach(function(t){
@@ -2014,6 +2038,584 @@ function buildRulerWin(){
 function wireClose(w){
   var x=w.querySelector('.wx');
   if(x) x.addEventListener('click',function(){ w.classList.remove('show'); });
+}
+</script>
+<script>
+'use strict';
+/* ══════════════════════════════════════════════════════════════════════
+   PINSEL — Stempelmaschine aus K-OS Draw v29 (Pixel)
+            Profil-/Spitzenmodell aus K-OS Vektor v22 (Pfade)
+            Fenster nach Kos-Linse-Prototyp VII
+
+   Werte:  hard  Härte (Kantenschärfe)      space  Abstand der Stempel
+           flow  Farbfluss je Stempel       psize  Druck → Größe
+           pflow Druck → Deckkraft          aspect Rundheit
+           angle Winkel                     ajit   Winkelstreuung
+           scat  Streuung quer              count  Tupfen je Stempel
+           grain Korn (gs = Korngröße, gstyle = Art)
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Bibliothek: Pixel ─────────────────────────────────────────────── */
+var BRUSH_PX=[
+  {id:'hart',   name:'Hart rund',   cat:'Malen',    hard:0.92,flow:1.00,space:0.09,psize:0.85,pflow:0.15,aspect:1.00,angle:0, grain:0,gs:1,gstyle:''},
+  {id:'weich',  name:'Weich',       cat:'Malen',    hard:0.35,flow:1.00,space:0.08,psize:0.85,pflow:0.35,aspect:1.00,angle:0, grain:0,gs:1,gstyle:''},
+  {id:'tinte',  name:'Tinte',       cat:'Malen',    hard:0.88,flow:1.00,space:0.06,psize:0.90,pflow:0.10,aspect:1.00,angle:0, grain:0,gs:1,gstyle:''},
+  {id:'air',    name:'Airbrush',    cat:'Malen',    hard:0.00,flow:0.07,space:0.05,psize:0.30,pflow:0.95,aspect:1.00,angle:0, grain:0,gs:1,gstyle:''},
+  {id:'blei',   name:'Bleistift',   cat:'Zeichnen', hard:0.80,flow:0.90,space:0.08,psize:0.70,pflow:0.55,aspect:1.00,angle:0, grain:1,gs:1,gstyle:'pencil'},
+  {id:'blei1',  name:'Bleistift fein',cat:'Zeichnen',hard:0.75,flow:0.85,space:0.10,psize:0.60,pflow:0.55,aspect:1.00,angle:0,grain:1,gs:1,gstyle:'pencil1'},
+  {id:'kohle',  name:'Kohle',       cat:'Zeichnen', hard:0.45,flow:0.85,space:0.12,psize:0.60,pflow:0.60,aspect:1.00,angle:0, grain:1,gs:2,gstyle:'chalk'},
+  {id:'kreide', name:'Kreide',      cat:'Zeichnen', hard:0.50,flow:0.80,space:0.14,psize:0.50,pflow:0.50,aspect:1.00,angle:0, grain:1,gs:4,gstyle:'chalk'},
+  {id:'marker', name:'Marker',      cat:'Marker',   hard:0.85,flow:1.00,space:0.10,psize:0.25,pflow:0.00,aspect:0.42,angle:40,grain:0,gs:1,gstyle:''},
+  {id:'markerB',name:'Marker breit',cat:'Marker',   hard:0.80,flow:0.70,space:0.09,psize:0.20,pflow:0.10,aspect:0.30,angle:28,grain:0,gs:1,gstyle:''},
+  {id:'spray',  name:'Sprenkel',    cat:'Struktur', hard:0.20,flow:0.35,space:0.16,psize:0.55,pflow:0.70,aspect:1.00,angle:0, grain:0,gs:1,gstyle:'',count:8,scat:1.4},
+  {id:'trocken',name:'Trockenpinsel',cat:'Struktur',hard:0.90,flow:0.55,space:0.09,psize:0.60,pflow:0.60,aspect:0.50,angle:0, grain:1,gs:2,gstyle:'chalk',rotFollow:1,count:4,scat:0.5},
+  {id:'flach',  name:'Flachpinsel', cat:'Malen',    hard:0.75,flow:0.90,space:0.07,psize:0.55,pflow:0.35,aspect:0.35,angle:0, grain:0,gs:1,gstyle:'',rotFollow:1},
+  {id:'wisch',  name:'Wischfinger', cat:'Struktur', hard:0.30,flow:0.35,space:0.06,psize:0.30,pflow:0.70,aspect:1.00,angle:0, grain:0,gs:1,gstyle:'',mode:'smudge'}
+];
+/* ── Bibliothek: Pfade (Spitze + Breitenprofil) ────────────────────── */
+var BRUSH_VE=[
+  {id:'tinte',      name:'Tinte (rund)',    cat:'Standard',mode:'round',  pressure:true, wScale:1.0,opacity:1.00,profil:'gleich'},
+  {id:'tinte_flach',name:'Tinte (flach)',   cat:'Standard',mode:'flat',   pressure:true, wScale:1.3,opacity:1.00,angle:40,profil:'kalligrafie'},
+  {id:'fineliner',  name:'Fineliner',       cat:'Standard',mode:'round',  pressure:false,wScale:0.5,opacity:1.00,profil:'band'},
+  {id:'spitzfeder', name:'Spitzfeder',      cat:'Standard',mode:'round',  pressure:true, wScale:1.4,opacity:1.00,pcurve:1.8,profil:'konisch'},
+  {id:'marker_rund',name:'Marker (rund)',   cat:'Marker',  mode:'round',  pressure:false,wScale:1.5,opacity:0.50,profil:'band'},
+  {id:'marker_flach',name:'Marker (flach)', cat:'Marker',  mode:'flat',   pressure:false,wScale:1.6,opacity:0.50,angle:35,profil:'band'},
+  {id:'rundpinsel', name:'Rundpinsel',      cat:'Malen',   mode:'soft',   pressure:true, wScale:1.4,opacity:1.00,flow:0.85,profil:'anschwellend'},
+  {id:'flachpinsel',name:'Flachpinsel',     cat:'Malen',   mode:'flat',   pressure:true, wScale:1.8,opacity:1.00,angle:25,profil:'kalligrafie'},
+  {id:'borste',     name:'Borstenpinsel',   cat:'Malen',   mode:'bristle',pressure:true, wScale:1.6,opacity:0.90,bristles:7,spread:0.9,profil:'anschwellend'},
+  {id:'trocken',    name:'Trockenpinsel',   cat:'Malen',   mode:'grain',  pressure:true, wScale:1.6,opacity:0.85,grain:0.9,profil:'frei'},
+  {id:'air_weich',  name:'Airbrush weich',  cat:'Airbrush',mode:'soft',   pressure:true, wScale:2.6,opacity:0.50,flow:0.22,profil:'gleich'},
+  {id:'air_detail', name:'Airbrush Detail', cat:'Airbrush',mode:'spray',  pressure:true, wScale:1.3,opacity:0.50,scatter:0.7,density:0.5,profil:'gleich'},
+  {id:'sprenkel',   name:'Sprenkel',        cat:'Airbrush',mode:'spray',  pressure:true, wScale:2.2,opacity:0.75,scatter:1.7,density:0.22,profil:'gleich'},
+  {id:'punkte',     name:'Punkte',          cat:'Stempel', mode:'stamp',  pressure:true, wScale:1.0,opacity:1.00,stamp:'round', spacing:1.8,profil:'gleich'},
+  {id:'quadrate',   name:'Quadrate',        cat:'Stempel', mode:'stamp',  pressure:true, wScale:1.0,opacity:1.00,stamp:'square',spacing:1.8,profil:'gleich'}
+];
+var PROFILE={
+  gleich:{nm:'Gleich',        f:function(t){ return 1; }},
+  anschwellend:{nm:'Anschwellend',f:function(t){ return 0.35+0.65*Math.sin(Math.PI*t); }},
+  kalligrafie:{nm:'Kalligrafie',f:function(t,ang){ return 0.35+0.65*Math.abs(Math.cos((ang||0)-0.6)); }},
+  konisch:{nm:'Konisch',     f:function(t){ return 1-0.75*t; }},
+  band:{nm:'Band',           f:function(t){ return 1; }},
+  frei:{nm:'Frei',           f:function(t){ return 0.6+0.4*Math.sin(t*11.3); }}
+};
+var BRUSH_DEFAULTS=JSON.parse(JSON.stringify({px:BRUSH_PX,ve:BRUSH_VE}));
+var userBrushes={px:[],ve:[]};
+var brushId={draw:'weich',vektor:'tinte'};
+var stabilizer=0.45;                       /* Genauigkeit: Positionsglättung */
+function brushList(which){
+  return (which==='ve'?BRUSH_VE:BRUSH_PX).concat(userBrushes[which==='ve'?'ve':'px']);
+}
+function curWhich(){ return lens==='vektor'?'ve':'px'; }
+function getBrush(id,which){
+  which=which||curWhich();
+  var L=brushList(which);
+  for(var i=0;i<L.length;i++) if(L[i].id===id) return L[i];
+  return L[0];
+}
+function curBrush(){ return getBrush(brushId[lens==='vektor'?'vektor':'draw'],curWhich()); }
+function setBrush(id){
+  var k=(lens==='vektor')?'vektor':'draw';
+  brushId[k]=id;
+  curTip=id;
+  recentTips=[id].concat(recentTips.filter(function(x){return x!==id;})).slice(0,8);
+  stampCache.clear();
+  saveBrushes();
+  syncTool();
+  toast('Spitze: '+getBrush(id).name);
+  radRelayout();
+  if($('winBrush').classList.contains('show')) buildBrushPanel();
+}
+function saveBrushes(){
+  try{
+    localStorage.setItem('koslinse_pinsel',JSON.stringify({
+      brushId:brushId, stabilizer:stabilizer, user:userBrushes,
+      pinTips:pinTips, recentTips:recentTips,
+      tuned:{px:BRUSH_PX,ve:BRUSH_VE}
+    }));
+  }catch(e){}
+}
+function loadBrushes(){
+  try{
+    var j=JSON.parse(localStorage.getItem('koslinse_pinsel')||'null');
+    if(j){
+      if(j.brushId) brushId=j.brushId;
+      if(typeof j.stabilizer==='number') stabilizer=j.stabilizer;
+      if(j.user) userBrushes=j.user;
+      if(j.pinTips) pinTips=j.pinTips;
+      if(j.recentTips) recentTips=j.recentTips;
+      if(j.tuned){                       /* eigene Werte an den Vorlagen behalten */
+        (j.tuned.px||[]).forEach(function(b){ var t=BRUSH_PX.filter(function(x){return x.id===b.id;})[0]; if(t) Object.assign(t,b); });
+        (j.tuned.ve||[]).forEach(function(b){ var t=BRUSH_VE.filter(function(x){return x.id===b.id;})[0]; if(t) Object.assign(t,b); });
+      }
+    }
+  }catch(e){}
+  curTip=brushId.draw;
+}
+
+/* ══════════ STEMPEL (Pixel) ══════════ */
+var stampCache=new Map();
+function makeStamp(b,colHex,px){
+  var key=b.id+'|'+colHex+'|'+px+'|'+Math.round((b.hard||0)*100)+'|'+Math.round((b.aspect==null?1:b.aspect)*100);
+  var hit=stampCache.get(key);
+  if(hit) return hit;
+  var R=Math.max(1,Math.ceil(px/2)), S=R*2;
+  var asp=clamp(b.aspect==null?1:b.aspect,0.05,1);
+  var c=document.createElement('canvas');
+  c.width=S; c.height=Math.max(2,Math.round(S*asp));
+  var g=c.getContext('2d');
+  var col=hexToRgb(colHex)||{r:0,g:0,b:0};
+  var cy=c.height/2, ry=c.height/2;
+  if(b.grain>0){
+    var seed=0;
+    for(var si=0;si<b.id.length;si++) seed=(seed*31+b.id.charCodeAt(si))|0;
+    var hash=function(x,y){
+      var n=(x*374761393+y*668265263+seed)|0;
+      n=((n^(n>>>13))*1274126177)|0; n^=n>>>16;
+      return (n>>>0)/4294967295;
+    };
+    var gs=Math.max(1,b.gs||1);
+    var img=g.createImageData(S,c.height), d=img.data;
+    for(var y=0;y<c.height;y++) for(var x=0;x<S;x++){
+      var nx=Math.floor(x/gs), ny=Math.floor(y/gs), n=hash(nx,ny);
+      var edge=1+(hash(nx+911,ny+577)-0.5)*(b.gstyle==='chalk'?0.55:0.10);
+      var dx=(x-R)/R, dy=(y-cy)/ry, r2=(dx*dx+dy*dy)/edge;
+      var a=0;
+      if(r2<=1){
+        var fall=1-Math.pow(Math.sqrt(r2),1+3*clamp(b.hard||0,0,1));
+        var kk=(b.gstyle==='pencil1')?(0.35+0.65*n):(b.gstyle==='pencil'?(0.5+0.5*n):(0.25+0.75*n));
+        a=Math.round(255*clamp(fall*kk,0,1));
+      }
+      var i4=(y*S+x)*4;
+      d[i4]=col.r; d[i4+1]=col.g; d[i4+2]=col.b; d[i4+3]=a;
+    }
+    g.putImageData(img,0,0);
+  } else {
+    g.save(); g.translate(S/2,c.height/2); g.scale(1,asp||1);
+    var gr=g.createRadialGradient(0,0,0,0,0,R);
+    var h=clamp(b.hard==null?0.7:b.hard,0,0.98);
+    gr.addColorStop(0,'rgba('+col.r+','+col.g+','+col.b+',1)');
+    gr.addColorStop(h,'rgba('+col.r+','+col.g+','+col.b+',1)');
+    gr.addColorStop(1,'rgba('+col.r+','+col.g+','+col.b+',0)');
+    g.fillStyle=gr;
+    g.beginPath(); g.arc(0,0,R,0,Math.PI*2); g.fill();
+    g.restore();
+  }
+  if(stampCache.size>64) stampCache.clear();
+  stampCache.set(key,c);
+  return c;
+}
+/* Kratzfläche: ein Strich wird einmal aufgebaut und dann übertragen —
+   deshalb wird ein überlagerter Strich nicht fleckig.                 */
+var strokeCv=null, strokeCx=null, brushRun=null;
+function ensureStrokeCv(){
+  if(!strokeCv||strokeCv.width!==doc.w||strokeCv.height!==doc.h){
+    strokeCv=document.createElement('canvas');
+    strokeCv.width=doc.w; strokeCv.height=doc.h;
+    strokeCx=strokeCv.getContext('2d');
+  }
+  return strokeCx;
+}
+function beginBrush(l,pt,pres,erase,pid){
+  var b=erase?getBrush('hart','px'):curBrush();
+  ensureStrokeCv();
+  strokeCx.setTransform(1,0,0,1,0,0);
+  strokeCx.clearRect(0,0,doc.w,doc.h);
+  brushRun={b:b,l:l,erase:erase,acc:0,first:true,ang:0,
+            sm:{x:pt.x,y:pt.y},smP:pres,last:{x:pt.x,y:pt.y,p:pres}};
+  drag={kind:'brush',l:l,erase:erase,start:pt,last:pt,id:pid};
+  painting=true; strokePid=pid;
+  segStamps(brushRun.last,brushRun.last);
+  req();
+}
+function brushMove(pt,pres){
+  if(!brushRun) return;
+  brushRun.smP+=(pres-brushRun.smP)*0.35;                 /* Druckglättung */
+  var nx,ny;
+  if(guide.rule!=='aus'){ var q=snapPt(pt,drag.start); nx=q.x; ny=q.y; brushRun.sm.x=nx; brushRun.sm.y=ny; }
+  else {
+    var aP=Math.max(0.08,1-0.92*stabilizer);              /* Stabilisator */
+    brushRun.sm.x+=(pt.x-brushRun.sm.x)*aP;
+    brushRun.sm.y+=(pt.y-brushRun.sm.y)*aP;
+    nx=brushRun.sm.x; ny=brushRun.sm.y;
+  }
+  var np={x:nx,y:ny,p:clamp(brushRun.smP,0.02,1)};
+  segStamps(brushRun.last,np);
+  brushRun.last=np;
+  req();
+}
+function segStamps(a,z){
+  var b=brushRun.b, base=VALS.draw.v1.val;
+  var dx=z.x-a.x, dy=z.y-a.y, dist=Math.hypot(dx,dy);
+  var ang=dist>0.01?Math.atan2(dy,dx):brushRun.ang;
+  brushRun.ang=ang;
+  if(brushRun.first){ stampAt(b,a.x,a.y,a.p,ang); brushRun.first=false; brushRun.acc=0; }
+  if(dist<=0) return;
+  var pos=0, guard=0;
+  while(guard++<4000){
+    var k0=pos/dist, curP=a.p+(z.p-a.p)*k0;
+    var step=Math.max(0.6,base*(b.space||0.08)*((1-(b.psize||0))+(b.psize||0)*curP));
+    var need=step-brushRun.acc;
+    if(need>dist-pos){ brushRun.acc+=dist-pos; return; }
+    pos+=Math.max(0,need); brushRun.acc=0;
+    var k=pos/dist;
+    stampAt(b,a.x+dx*k,a.y+dy*k,a.p+(z.p-a.p)*k,ang);
+    if(pos>=dist) return;
+  }
+}
+function stampAt(b,x,y,p,ang){
+  var base=VALS.draw.v1.val;
+  var psz=Math.max(1,base*((1-(b.psize||0))+(b.psize||0)*p));
+  var flow=clamp((b.flow==null?1:b.flow)*((1-(b.pflow||0))+(b.pflow||0)*p),0.01,1);
+  var cnt=Math.max(1,b.count||1);
+  var g=brushRun.erase?brushRun.l.data.cv.getContext('2d'):strokeCx;
+  var st=makeStamp(b,brushRun.erase?'#000000':color,psz);
+  mirrorPts({x:x,y:y}).forEach(function(m){
+    for(var i=0;i<cnt;i++){
+      var sx=m.x, sy=m.y, rot=((b.angle||0)*Math.PI/180);
+      if(b.rotFollow) rot+=ang;
+      if(b.ajit) rot+=(Math.random()-0.5)*2*Math.PI*b.ajit;
+      var sc=1;
+      if(cnt>1||b.scat){
+        var off=(Math.random()-0.5)*2*(b.scat||0.8)*psz;
+        var off2=(Math.random()-0.5)*0.7*(b.scat||0.8)*psz;
+        sx+=Math.cos(rot+Math.PI/2)*off+Math.cos(rot)*off2;
+        sy+=Math.sin(rot+Math.PI/2)*off+Math.sin(rot)*off2;
+        if(cnt>1) sc=0.35+0.6*Math.random();
+      }
+      g.save();
+      g.globalCompositeOperation=brushRun.erase?'destination-out':'source-over';
+      g.globalAlpha=flow*(cnt>1?(0.55+0.45*Math.random()):1);
+      g.translate(sx,sy); g.rotate(rot);
+      g.drawImage(st,-st.width*sc/2,-st.height*sc/2,st.width*sc,st.height*sc);
+      g.restore();
+    }
+  });
+}
+function endBrush(){
+  if(!brushRun) return;
+  var r=brushRun; brushRun=null;
+  if(!r.erase){
+    var g=r.l.data.cv.getContext('2d');
+    g.save();
+    g.globalAlpha=clamp(VALS.draw.v2.val/100,0,1);
+    g.globalCompositeOperation='source-over';
+    g.drawImage(strokeCv,0,0);
+    g.restore();
+  }
+  if(strokeCx) strokeCx.clearRect(0,0,doc.w,doc.h);
+  invalidate('pixel');
+}
+
+/* ══════════ PFADE: Strich mit Spitze und Profil ══════════ */
+function pathWidthAt(pth,i){
+  var b=getBrush(pth.brush||'tinte','ve');
+  var n=pth.pts.length, t=n>1?i/(n-1):0;
+  var pt=pth.pts[i]||{};
+  var pr=(pt.p==null?0.6:pt.p);
+  if(b.pcurve) pr=Math.pow(pr,b.pcurve);
+  var prof=PROFILE[pth.profil||b.profil||'gleich']||PROFILE.gleich;
+  var a=0;
+  if(i>0&&pth.pts[i-1]) a=Math.atan2(pt.y-pth.pts[i-1].y,pt.x-pth.pts[i-1].x);
+  var f=prof.f(t,a);
+  var w=(pth.w||4)*(b.wScale||1)*f;
+  if(b.pressure) w*=(0.35+0.85*pr);
+  return Math.max(0.4,w);
+}
+function paintPath(g,pth,asGhost){
+  var pts=pth.pts;
+  if(!pts||!pts.length) return;
+  var b=getBrush(pth.brush||'tinte','ve');
+  var col=asGhost?'#7d8a86':pth.col;
+  g.save();
+  g.lineCap='round'; g.lineJoin='round';
+  g.strokeStyle=col; g.fillStyle=col;
+  g.globalAlpha=(asGhost?1:(b.opacity==null?1:b.opacity));
+  if(pts.length===1){
+    g.beginPath(); g.arc(pts[0].x,pts[0].y,pathWidthAt(pth,0)/2,0,Math.PI*2); g.fill();
+    g.restore(); return;
+  }
+  if(b.mode==='spray'){
+    var dens=b.density==null?0.4:b.density;
+    for(var i=1;i<pts.length;i++){
+      var w=pathWidthAt(pth,i), seg=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);
+      var n2=Math.max(1,Math.round(seg*dens));
+      for(var k=0;k<n2;k++){
+        var t=k/n2;
+        var x=pts[i-1].x+(pts[i].x-pts[i-1].x)*t, y=pts[i-1].y+(pts[i].y-pts[i-1].y)*t;
+        var r=w*(b.scatter||1);
+        g.globalAlpha=(b.opacity||0.5)*(0.35+0.65*Math.random());
+        g.beginPath();
+        g.arc(x+(Math.random()-0.5)*2*r,y+(Math.random()-0.5)*2*r,Math.max(0.4,w*0.18),0,Math.PI*2);
+        g.fill();
+      }
+    }
+    g.restore(); return;
+  }
+  if(b.mode==='stamp'){
+    var sp=(b.spacing||1.8);
+    for(var j=0;j<pts.length;j++){
+      var w2=pathWidthAt(pth,j);
+      if(j%Math.max(1,Math.round(sp))!==0) continue;
+      var r2=Math.max(0.6,w2/2);
+      if(b.stamp==='square') g.fillRect(pts[j].x-r2,pts[j].y-r2,r2*2,r2*2);
+      else { g.beginPath(); g.arc(pts[j].x,pts[j].y,r2,0,Math.PI*2); g.fill(); }
+    }
+    g.restore(); return;
+  }
+  if(b.mode==='bristle'){
+    var nb=b.bristles||7, spread=b.spread||1;
+    for(var q=0;q<nb;q++){
+      var offN=(q/(nb-1)-0.5)*2*spread;
+      g.globalAlpha=(b.opacity||0.9)*(0.45+0.55*(1-Math.abs(offN)/Math.max(0.001,spread)));
+      g.beginPath();
+      for(var m=0;m<pts.length;m++){
+        var wq=pathWidthAt(pth,m);
+        var pa=(m>0)?Math.atan2(pts[m].y-pts[m-1].y,pts[m].x-pts[m-1].x):0;
+        var ox=Math.cos(pa+Math.PI/2)*offN*wq*0.5, oy=Math.sin(pa+Math.PI/2)*offN*wq*0.5;
+        if(m===0) g.moveTo(pts[m].x+ox,pts[m].y+oy); else g.lineTo(pts[m].x+ox,pts[m].y+oy);
+      }
+      g.lineWidth=Math.max(0.4,(pth.w||4)*0.22);
+      g.stroke();
+    }
+    g.restore(); return;
+  }
+  /* round · flat · soft · grain: Breite Segment für Segment */
+  for(var s=1;s<pts.length;s++){
+    var wa=(pathWidthAt(pth,s-1)+pathWidthAt(pth,s))/2;
+    if(b.mode==='flat'){
+      var av=((b.angle||30)*Math.PI/180);
+      var pax=Math.cos(av)*wa*0.5, pay=Math.sin(av)*wa*0.5;
+      g.beginPath();
+      g.moveTo(pts[s-1].x-pax,pts[s-1].y-pay);
+      g.lineTo(pts[s-1].x+pax,pts[s-1].y+pay);
+      g.lineTo(pts[s].x+pax,pts[s].y+pay);
+      g.lineTo(pts[s].x-pax,pts[s].y-pay);
+      g.closePath(); g.fill();
+    } else if(b.mode==='soft'){
+      g.globalAlpha=(b.opacity==null?1:b.opacity)*(b.flow||0.6);
+      g.lineWidth=wa; g.beginPath();
+      g.moveTo(pts[s-1].x,pts[s-1].y); g.lineTo(pts[s].x,pts[s].y); g.stroke();
+      g.lineWidth=wa*0.55;
+      g.beginPath(); g.moveTo(pts[s-1].x,pts[s-1].y); g.lineTo(pts[s].x,pts[s].y); g.stroke();
+    } else if(b.mode==='grain'){
+      var gcount=Math.max(1,Math.round(wa*0.5));
+      for(var gi=0;gi<gcount;gi++){
+        g.globalAlpha=(b.opacity||0.85)*(0.25+0.75*Math.random())*(1-(b.grain||0.5)*0.4);
+        var gt=Math.random();
+        var gx=pts[s-1].x+(pts[s].x-pts[s-1].x)*gt, gy=pts[s-1].y+(pts[s].y-pts[s-1].y)*gt;
+        var gr2=Math.max(0.3,wa*0.16);
+        g.beginPath();
+        g.arc(gx+(Math.random()-0.5)*wa*0.7,gy+(Math.random()-0.5)*wa*0.7,gr2,0,Math.PI*2);
+        g.fill();
+      }
+    } else {
+      g.lineWidth=wa;
+      g.beginPath(); g.moveTo(pts[s-1].x,pts[s-1].y); g.lineTo(pts[s].x,pts[s].y); g.stroke();
+    }
+  }
+  if(pth.closed&&pts.length>2){
+    g.lineWidth=pathWidthAt(pth,pts.length-1);
+    g.beginPath(); g.moveTo(pts[pts.length-1].x,pts[pts.length-1].y);
+    g.lineTo(pts[0].x,pts[0].y); g.stroke();
+  }
+  g.restore();
+}
+
+/* ══════════ PINSELFENSTER (Prototyp VII) ══════════ */
+function tipPreview(cv,brId,which){
+  var g=cv.getContext('2d');
+  if(!g) return;
+  g.setTransform(1,0,0,1,0,0);
+  g.clearRect(0,0,cv.width,cv.height);
+  var b=getBrush(brId,which);
+  var W=cv.width, H=cv.height;
+  var pts=[];
+  for(var i=0;i<=48;i++){
+    var t=i/48;
+    pts.push({x:8+t*(W-16), y:H/2+Math.sin(t*Math.PI*1.6)*(H*0.22), p:0.15+0.85*Math.sin(Math.PI*t)});
+  }
+  if(which==='ve'){
+    paintPath(g,{pts:pts,w:Math.max(2,H*0.22),col:color,brush:b.id,profil:b.profil,closed:false},false);
+    return;
+  }
+  /* Pixel: echte Stempelspur */
+  var saveVals=VALS.draw.v1.val;
+  var pxSize=Math.max(3,H*0.5);
+  var acc=0, ang=0;
+  for(var s=1;s<pts.length;s++){
+    var a=pts[s-1], z=pts[s];
+    var dx=z.x-a.x, dy=z.y-a.y, dist=Math.hypot(dx,dy);
+    ang=Math.atan2(dy,dx);
+    var pos=0;
+    while(true){
+      var step=Math.max(0.6,pxSize*(b.space||0.08));
+      var need=step-acc;
+      if(need>dist-pos){ acc+=dist-pos; break; }
+      pos+=Math.max(0,need); acc=0;
+      var k=pos/dist, p=a.p+(z.p-a.p)*k;
+      var psz=Math.max(1,pxSize*((1-(b.psize||0))+(b.psize||0)*p));
+      var st=makeStamp(b,color,psz);
+      var flow=clamp((b.flow==null?1:b.flow)*((1-(b.pflow||0))+(b.pflow||0)*p),0.01,1);
+      var cnt=Math.max(1,b.count||1);
+      for(var c2=0;c2<cnt;c2++){
+        var sx=a.x+dx*k, sy=a.y+dy*k, rot=((b.angle||0)*Math.PI/180);
+        if(b.rotFollow) rot+=ang;
+        if(b.ajit) rot+=(Math.random()-0.5)*2*Math.PI*b.ajit;
+        var scl=1;
+        if(cnt>1||b.scat){
+          var o1=(Math.random()-0.5)*2*(b.scat||0.8)*psz*0.5;
+          sx+=Math.cos(rot+Math.PI/2)*o1; sy+=Math.sin(rot+Math.PI/2)*o1;
+          if(cnt>1) scl=0.35+0.6*Math.random();
+        }
+        g.save();
+        g.globalAlpha=flow*(cnt>1?0.6:1);
+        g.translate(sx,sy); g.rotate(rot);
+        g.drawImage(st,-st.width*scl/2,-st.height*scl/2,st.width*scl,st.height*scl);
+        g.restore();
+      }
+      if(pos>=dist) break;
+    }
+  }
+  VALS.draw.v1.val=saveVals;
+}
+var brushTab='alle';
+function buildBrushPanel(){
+  var which=curWhich(), w=$('winBrush');
+  var b=curBrush();
+  var cats=['alle'].concat(brushList(which).map(function(x){return x.cat||'Malen';}).filter(function(v,i,a){return a.indexOf(v)===i;}));
+  var list=brushList(which).filter(function(x){ return brushTab==='alle'||x.cat===brushTab; });
+  var isPx=(which==='px');
+  var html='<button class="wx" data-close="winBrush">\u2715</button>'
+    +'<h5>'+(isPx?'PINSEL':'SPITZE \u00B7 PROFIL')+' \u00B7 '+b.name.toUpperCase()+'</h5>'
+    +'<canvas id="bigPrev" width="270" height="60" style="width:270px;height:60px;border-radius:8px;background:#eceae6;display:block"></canvas>'
+    +'<div class="pkrow" style="margin-top:8px;flex-wrap:wrap">'
+    +cats.map(function(c){ return '<button class="pkbtn'+(brushTab===c?' on':'')+'" data-cat="'+c+'"'
+        +(brushTab===c?' style="border-color:var(--ac);color:var(--ac)"':'')+'>'+(c==='alle'?'Alle':c)+'</button>'; }).join('')
+    +'</div><div class="tiprow">';
+  list.forEach(function(x){
+    var inFan=pinTips.concat(recentTips).slice(0,3).indexOf(x.id)>=0;
+    html+='<div class="tip'+(x.id===b.id?' on':'')+(inFan?' infan':'')+'" data-tip="'+x.id+'">'
+      +'<canvas width="240" height="30" data-prev="'+x.id+'" style="width:120px;height:15px"></canvas>'
+      +'<span class="nm">'+x.name+'</span>'
+      +'<span class="st'+(pinTips.indexOf(x.id)>=0?' on':'')+'" data-pintip="'+x.id+'">\u2605</span></div>';
+  });
+  html+='</div>';
+  /* Form + Dynamik */
+  function sl(id,nm,val,min,max,step,unit){
+    return '<div class="sl"><div class="r1"><span>'+nm+'</span><span class="v" id="'+id+'V">'+val+(unit||'')+'</span></div>'
+      +'<input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+val+'"></div>';
+  }
+  if(isPx){
+    html+='<h5>FORM</h5>'
+      +sl('bHard','H\u00E4rte',Math.round((b.hard||0)*100),0,100,1,' %')
+      +sl('bAsp','Rundheit',Math.round((b.aspect==null?1:b.aspect)*100),5,100,1,' %')
+      +sl('bAng','Winkel',Math.round(b.angle||0),0,180,1,'\u00B0')
+      +sl('bSpace','Abstand',Math.round((b.space||0.08)*100),1,50,1,' %')
+      +'<h5>DYNAMIK</h5>'
+      +sl('bPSize','Druck \u2192 Gr\u00F6\u00DFe',Math.round((b.psize||0)*100),0,100,1,' %')
+      +sl('bPFlow','Druck \u2192 Deckkraft',Math.round((b.pflow||0)*100),0,100,1,' %')
+      +sl('bFlow','Fluss',Math.round((b.flow==null?1:b.flow)*100),1,100,1,' %')
+      +sl('bScat','Streuung',Math.round((b.scat||0)*100),0,200,1,' %')
+      +sl('bCount','Tupfen',Math.max(1,b.count||1),1,12,1,'')
+      +sl('bJit','Winkelstreuung',Math.round((b.ajit||0)*100),0,100,1,' %');
+  } else {
+    html+='<h5>PROFIL \u00B7 BREITE ENTLANG DES PFADES</h5><div class="pkrow" style="flex-wrap:wrap">'
+      +Object.keys(PROFILE).map(function(k){
+        return '<button class="pkbtn'+((b.profil||'gleich')===k?' on':'')+'" data-prof="'+k+'"'
+          +((b.profil||'gleich')===k?' style="border-color:var(--ac);color:var(--ac)"':'')+'>'+PROFILE[k].nm+'</button>';
+      }).join('')+'</div>'
+      +'<h5>FORM</h5>'
+      +sl('bWScale','Breite',Math.round((b.wScale||1)*100),20,400,5,' %')
+      +sl('bOpa','Deckkraft',Math.round((b.opacity==null?1:b.opacity)*100),5,100,1,' %')
+      +sl('bAng','Winkel',Math.round(b.angle||0),0,180,1,'\u00B0')
+      +'<h5>DYNAMIK</h5>'
+      +sl('bPCurve','Druckkurve',Math.round((b.pcurve||1)*100),50,300,5,' %');
+  }
+  html+='<h5>GENAUIGKEIT</h5>'
+    +sl('bStab','Stabilisator',Math.round(stabilizer*100),0,95,1,' %')
+    +'<div class="pkrow"><button class="pkbtn" id="bSaveOwn">Als eigene Spitze</button>'
+    +'<button class="pkbtn" id="bReset">Zur\u00FCcksetzen</button>'
+    +(b.own?'<button class="pkbtn" id="bDelOwn">L\u00F6schen</button>':'')+'</div>'
+    +'<div class="mono" style="font-size:11px;color:var(--tx3);margin-top:6px">'
+    +'Gr\u00F6\u00DFe und Deckkraft liegen an den Reglern am Rad \u2014 hier steht, <b>wie</b> der Strich aussieht.</div>';
+  w.innerHTML=html;
+  w.classList.add('show');
+  tipPreview($('bigPrev'),b.id,which);
+  w.querySelectorAll('[data-prev]').forEach(function(cv){ tipPreview(cv,cv.dataset.prev,which); });
+  w.querySelectorAll('[data-cat]').forEach(function(el){
+    el.addEventListener('click',function(){ brushTab=el.dataset.cat; buildBrushPanel(); });
+  });
+  w.querySelectorAll('[data-tip]').forEach(function(el){
+    el.addEventListener('click',function(e){
+      if(e.target.dataset.pintip) return;
+      setBrush(el.dataset.tip);
+      buildBrushPanel();
+    });
+  });
+  w.querySelectorAll('[data-pintip]').forEach(function(el){
+    el.addEventListener('click',function(e){
+      e.stopPropagation();
+      var t=el.dataset.pintip, i=pinTips.indexOf(t);
+      if(i>=0) pinTips.splice(i,1);
+      else if(pinTips.length>=5){ toast('F\u00E4cher voll \u2014 erst ein anderes Sternchen l\u00F6sen'); return; }
+      else pinTips.push(t);
+      saveBrushes(); buildBrushPanel(); radRelayout();
+    });
+  });
+  w.querySelectorAll('[data-prof]').forEach(function(el){
+    el.addEventListener('click',function(){
+      b.profil=el.dataset.prof;
+      saveBrushes(); invalidate('pfade'); req(); buildBrushPanel();
+      toast('Profil: '+PROFILE[b.profil].nm);
+    });
+  });
+  var map={bHard:['hard',0.01],bAsp:['aspect',0.01],bAng:['angle',1],bSpace:['space',0.01],
+           bPSize:['psize',0.01],bPFlow:['pflow',0.01],bFlow:['flow',0.01],bScat:['scat',0.01],
+           bCount:['count',1],bJit:['ajit',0.01],bWScale:['wScale',0.01],bOpa:['opacity',0.01],
+           bPCurve:['pcurve',0.01]};
+  Object.keys(map).forEach(function(id){
+    var el=$(id); if(!el) return;
+    el.addEventListener('input',function(){
+      var key=map[id][0], f=map[id][1];
+      b[key]=Number(this.value)*f;
+      $(id+'V').textContent=this.value+(id==='bAng'?'\u00B0':(id==='bCount'?'':' %'));
+      stampCache.clear();
+      tipPreview($('bigPrev'),b.id,which);
+      var pc=w.querySelector('[data-prev="'+b.id+'"]');
+      if(pc) tipPreview(pc,b.id,which);
+      if(which==='ve'){ invalidate('pfade'); req(); }
+      saveBrushes();
+    });
+  });
+  $('bStab').addEventListener('input',function(){
+    stabilizer=clamp(Number(this.value)/100,0,0.95);
+    $('bStabV').textContent=this.value+' %';
+    saveBrushes();
+  });
+  $('bSaveOwn').addEventListener('click',function(){
+    var nm=prompt('Name der eigenen Spitze:',b.name+' eigen');
+    if(!nm) return;
+    var c=JSON.parse(JSON.stringify(b));
+    c.id=b.id+'_'+Date.now().toString(36);
+    c.name=nm; c.cat='Eigene'; c.own=true;
+    userBrushes[which].push(c);
+    saveBrushes(); setBrush(c.id); brushTab='Eigene'; buildBrushPanel();
+    toast('Eigene Spitze gespeichert');
+  });
+  $('bReset').addEventListener('click',function(){
+    var src=BRUSH_DEFAULTS[which].filter(function(x){return x.id===b.id;})[0];
+    if(!src){ toast('Eigene Spitzen haben keine Vorlage'); return; }
+    Object.keys(src).forEach(function(k){ b[k]=src[k]; });
+    stampCache.clear(); saveBrushes(); buildBrushPanel();
+    if(which==='ve'){ invalidate('pfade'); req(); }
+    toast('Auf Vorlage zur\u00FCckgesetzt');
+  });
+  if($('bDelOwn')) $('bDelOwn').addEventListener('click',function(){
+    userBrushes[which]=userBrushes[which].filter(function(x){return x.id!==b.id;});
+    saveBrushes(); setBrush(brushList(which)[0].id); brushTab='alle'; buildBrushPanel();
+    toast('Eigene Spitze gel\u00F6scht');
+  });
+  wireClose(w);
 }
 </script>
 <script>
@@ -2537,6 +3139,10 @@ function commands(){
   c.push({t:'Aus der Ablage \u00F6ffnen (Dropbox)',k:'Ablage',fn:function(){ closeWins(); $('winfile').classList.add('show'); dbxListKos(); }});
   c.push({t:'Ebene l\u00F6schen \u00B7 umbenennen \u00B7 Deckkraft',k:'Stapel',fn:function(){ var l=activeLayer(); if(l) openLayerWin(l); }});
   c.push({t:'Lineal \u00B7 Schablone \u00B7 Spiegel',k:'Hilfslinien',fn:function(){ openWin('winRuler'); }});
+  c.push({t:'Pinsel \u00B7 Spitzen \u00B7 Bibliothek',k:'Pinsel',fn:function(){ openWin('winBrush'); }});
+  brushList(curWhich()).forEach(function(b){
+    c.push({t:'Spitze: '+b.name,k:(b.cat||'Pinsel'),fn:function(){ setBrush(b.id); }});
+  });
   c.push({t:'Lineal aus',k:'Hilfslinien',fn:function(){ setGuide('rule','aus'); setGuide('mirror','aus'); toast('Hilfslinien aus'); }});
   Object.keys(LENS).forEach(function(k){ c.push({t:'Linse: '+LENS[k].nm,k:LENS[k].sicht,fn:function(){setLens(k);}}); });
   return c;
@@ -2645,18 +3251,28 @@ function pathsToSvg(l){
     if(!p.pts.length) return;
     s+='<path d="M'+p.pts.map(function(q){return Math.round(q.x*10)/10+' '+Math.round(q.y*10)/10;}).join(' L');
     if(p.closed) s+=' Z';
-    s+='" fill="none" stroke="'+p.col+'" stroke-width="'+p.w+'" stroke-linecap="round" stroke-linejoin="round"/>';
+    s+='" fill="none" stroke="'+p.col+'" stroke-width="'+p.w+'" stroke-linecap="round" stroke-linejoin="round"'
+      +' data-brush="'+(p.brush||'tinte')+'" data-profil="'+(p.profil||'gleich')+'"'
+      +' data-druck="'+p.pts.map(function(q){return Math.round((q.p==null?0.6:q.p)*100);}).join(',')+'"/>';
   });
   return s+'</svg>';
 }
 function svgToPaths(txt){
-  var out=[], re=/<path d="M([^"]+)" fill="none" stroke="([^"]+)" stroke-width="([^"]+)"/g, m;
+  var out=[], re=/<path d="M([^"]+)" fill="none" stroke="([^"]+)" stroke-width="([^"]+)"([^>]*)\/>/g, m;
   while((m=re.exec(txt))){
-    var d=m[1], closed=/ Z\s*$/.test(d);
-    var pts=d.replace(/ Z\s*$/,'').split(' L').map(function(pp){
-      var xy=pp.trim().split(/\s+/); return {x:parseFloat(xy[0]),y:parseFloat(xy[1])};
+    var d=m[1], closed=/ Z\s*$/.test(d), extra=m[4]||'';
+    var br=/data-brush="([^"]+)"/.exec(extra);
+    var pr=/data-profil="([^"]+)"/.exec(extra);
+    var dr=/data-druck="([^"]*)"/.exec(extra);
+    var press=dr?dr[1].split(',').map(function(v){ return (parseFloat(v)||60)/100; }):null;
+    var pts=d.replace(/ Z\s*$/,'').split(' L').map(function(pp,i){
+      var xy=pp.trim().split(/\s+/);
+      var o={x:parseFloat(xy[0]),y:parseFloat(xy[1])};
+      if(press&&press[i]!=null) o.p=press[i];
+      return o;
     });
-    out.push({pts:pts,w:parseFloat(m[3]),col:m[2],closed:closed});
+    out.push({pts:pts,w:parseFloat(m[3]),col:m[2],closed:closed,
+              brush:br?br[1]:'tinte',profil:pr?pr[1]:'gleich'});
   }
   return out;
 }
@@ -3009,6 +3625,7 @@ function afterDocLoad(){
 function boot(){
   sctx=stage.getContext('2d');
   loadFarben();
+  if(typeof loadBrushes==='function') loadBrushes();
   try{ var db=localStorage.getItem('koslinse_db'); if(db!==null) durchblick=Number(db); }catch(e){}
   try{
     var gj=JSON.parse(localStorage.getItem('koslinse_guide')||'null');
@@ -3052,7 +3669,15 @@ window.KOSL={
   TOOLDEF:TOOLDEF, RING:RING, ALLTOOLS:ALLTOOLS, pathAct:pathAct, elAct:elAct,
   hsv:hsv, get libs(){return libs;}, generatePalette:generatePalette, buildColorPanel:buildColorPanel,
   hexToRgb:hexToRgb, rgbToHex:rgbToHex, hsvToRgb:hsvToRgb, rgbToHsv:rgbToHsv,
-  get diagOn(){return diagOn;}, toggleDiag:toggleDiag, get recentCols(){return recentCols;}
+  get diagOn(){return diagOn;}, toggleDiag:toggleDiag, get recentCols(){return recentCols;},
+  BRUSH_PX:BRUSH_PX, BRUSH_VE:BRUSH_VE, PROFILE:PROFILE, brushList:brushList,
+  getBrush:getBrush, curBrush:curBrush, setBrush:setBrush, curWhich:curWhich,
+  get brushId(){return brushId;}, get stabilizer(){return stabilizer;},
+  set stabilizer(v){stabilizer=v;}, get userBrushes(){return userBrushes;},
+  makeStamp:makeStamp, pathWidthAt:pathWidthAt, paintPath:paintPath,
+  buildBrushPanel:buildBrushPanel, tipPreview:tipPreview, saveBrushes:saveBrushes, loadBrushes:loadBrushes,
+  get brushRun(){return brushRun;}, get strokeCv(){return strokeCv;},
+  get pinTips(){return pinTips;}, get touchActive(){return touchActive();}
 };
 </script>
 </body>
