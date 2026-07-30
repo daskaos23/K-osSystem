@@ -979,11 +979,10 @@ document.addEventListener('selectstart',function(e){
   if(e.target&&e.target.tagName==='INPUT') return;
   e.preventDefault();
 },true);
-$('stagewrap').addEventListener('touchstart',function(e){
-  if(e.target&&e.target.closest&&e.target.closest('input,select,textarea')) return;
-  e.preventDefault();                                     /* verhindert Auswahl-/Lupen-Menü beim Halten */
-},{passive:false});
-$('stagewrap').addEventListener('touchmove',function(e){ e.preventDefault(); },{passive:false});
+/* Nur auf der Leinwand: verhindert Lupe/Auswahl beim Halten. Rad, Fächer und
+   Fenster liegen darüber und behalten ihre Tipps — deshalb NICHT auf stagewrap. */
+stage.addEventListener('touchstart',function(e){ e.preventDefault(); },{passive:false});
+stage.addEventListener('touchmove',function(e){ e.preventDefault(); },{passive:false});
 $('stagewrap').addEventListener('dragstart',function(e){ e.preventDefault(); });
 $('stagewrap').addEventListener('auxclick',function(e){
   e.preventDefault();
@@ -1680,6 +1679,26 @@ function radOnTouch(){ /* Berühren zeichnet — Rad ist sofort weg (folgend) bz
 }
 stage.addEventListener('pointerup',function(){ radEl.classList.remove('dim'); });
 
+/* Tipp-Bindung: unabhängig davon, ob der Browser einen Klick nachliefert.
+   Berührung, Stift und Maus lösen gleich zuverlässig aus.                */
+function tapBind(el,fn){
+  var st=null;
+  el.addEventListener('pointerdown',function(e){
+    e.stopPropagation(); e.preventDefault();
+    st={x:e.clientX,y:e.clientY,t:Date.now()};
+    try{ el.setPointerCapture(e.pointerId); }catch(err){}
+  });
+  el.addEventListener('pointerup',function(e){
+    e.stopPropagation(); e.preventDefault();
+    if(!st) return;
+    var moved=Math.hypot(e.clientX-st.x,e.clientY-st.y)>14;
+    var s=st; st=null;
+    if(!moved) fn(e,s);
+  });
+  el.addEventListener('pointercancel',function(){ st=null; });
+  el.addEventListener('click',function(e){ e.stopPropagation(); e.preventDefault(); });
+}
+
 /* ══════════ AUFBAU ══════════ */
 function radRelayout(){
   radEl.innerHTML='';
@@ -1715,7 +1734,7 @@ function radRelayout(){
   all.className='rs all'+(rad.big?' on':'');
   all.style.left='0px'; all.style.top=R+'px';
   all.textContent=rad.big?'Zu':'Alle';
-  all.addEventListener('click',function(ev){ ev.stopPropagation(); rad.big=!rad.big; rad.fan=null; radRelayout(); });
+  tapBind(all,function(){ rad.big=!rad.big; rad.fan=null; radRelayout(); });
   radEl.appendChild(all);
   /* Regler links/rechts in der Lücke */
   radEl.appendChild(mkSlider('v1',-R*0.52,0));
@@ -1732,8 +1751,7 @@ function mkSat(t,x,y,size){
   if(size){ el.style.width=size+'px'; el.style.height=size+'px'; el.style.fontSize=Math.max(11,size*0.36)+'px'; }
   if(isCol){ el.style.background=color; el.style.borderColor='#0a0a0a55'; el.innerHTML='<span class="bnd" style="--c:'+color+'"></span>'; el.title='Farbe'; }
   else { el.textContent=(TOOLDEF[t]||{}).g; el.title=(TOOLDEF[t]||{}).nm; }
-  el.addEventListener('click',function(ev){
-    ev.stopPropagation();
+  tapBind(el,function(){
     var now=Date.now();
     var dbl=(now-rad.lastTap.t<420&&rad.lastTap.id===t);
     rad.lastTap={t:now,id:t};
@@ -1857,27 +1875,26 @@ function buildFan(){
     if(it.kind==='col'){ el.style.background=it.v; el.style.borderColor=it.v==='#ffffff'?'#999':it.v;
       if(it.v===color) el.classList.add('on');
       if(it.pin) el.innerHTML='<span class="pindot"></span>';
-      el.addEventListener('click',function(ev){ ev.stopPropagation(); setColor(it.v); rad.fan=null; radRelayout(); });
+      tapBind(el,function(){ setColor(it.v); rad.fan=null; radRelayout(); });
     } else if(it.kind==='tip'){
       var bo=getBrush(it.v,curWhich());
       el.textContent=bo.name[0].toUpperCase();
       if(it.v===curBrush().id) el.classList.add('on');
       if(it.pin) el.innerHTML+='<span class="pindot"></span>';
       el.title=bo.name;
-      el.addEventListener('click',function(ev){ ev.stopPropagation(); setBrush(it.v); rad.fan=null; radRelayout(); });
+      tapBind(el,function(){ setBrush(it.v); rad.fan=null; radRelayout(); });
     } else if(it.kind==='rul'){
       el.textContent=it.v[0];
       el.title=it.v;
       if(guide.rule===it.r) el.classList.add('on');
-      el.addEventListener('click',function(ev){
-        ev.stopPropagation();
+      tapBind(el,function(){
         setGuide('rule',guide.rule===it.r?'aus':it.r);
         toast('Lineal: '+(guide.rule==='aus'?'aus':it.v));
         rad.fan=null; radRelayout();
       });
     } else { /* … = Fenster */
       el.classList.add('dots'); el.textContent='\u22EF'; el.title='Fenster öffnen';
-      el.addEventListener('click',function(ev){ ev.stopPropagation();
+      tapBind(el,function(){
         openToolWin(rad.fan==='tips'?(lens==='vektor'?'pen':'brush'):'ruler'); });
     }
     radEl.appendChild(el);
