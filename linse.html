@@ -644,6 +644,7 @@ function pathAct(k){
   if(!overlaySel||overlaySel.layerId!==l.id){ toast('Erst einen Pfad ausw\u00E4hlen (Auswahl-Werkzeug)'); return; }
   var i=overlaySel.idx, p=l.data.paths[i];
   if(!p){ toast('Pfad nicht gefunden'); return; }
+  var keepSel=overlaySel; snapLayer(l); overlaySel=keepSel;
   if(k==='smooth'){ p.pts=smoothPts(p.pts,70); toast('Pfad gegl\u00E4ttet'); }
   else if(k==='simplify'){ var n0=p.pts.length; p.pts=simplify(p.pts,2.2); toast('Vereinfacht: '+n0+' \u2192 '+p.pts.length+' Punkte'); }
   else if(k==='close'){ p.closed=!p.closed; toast(p.closed?'Pfad geschlossen':'Pfad ge\u00F6ffnet'); }
@@ -663,6 +664,7 @@ function elAct(k){
   if(!overlaySel||overlaySel.layerId!==l.id){ toast('Erst ein Element ausw\u00E4hlen'); return; }
   var i=overlaySel.idx, e=l.data.els[i];
   if(!e){ toast('Element nicht gefunden'); return; }
+  var keepEl=overlaySel; snapLayer(l); overlaySel=keepEl;
   if(k==='alignL'){ e.x=doc.w*0.08; toast('Links ausgerichtet'); }
   else if(k==='alignC'){ e.x=(doc.w-e.w)/2; toast('Mittig ausgerichtet'); }
   else if(k==='alignR'){ e.x=doc.w*0.92-e.w; toast('Rechts ausgerichtet'); }
@@ -1049,7 +1051,8 @@ function startGesture(){
   var ts=touchList(); if(ts.length<2) return;
   var a=ts[0], b=ts[1];
   gest={d0:Math.hypot(b.x-a.x,b.y-a.y), a0:Math.atan2(b.y-a.y,b.x-a.x),
-        mid0:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}, v0:{ox:view.ox,oy:view.oy,scale:view.scale,rot:view.rot}, wmid:null};
+        mid0:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}, v0:{ox:view.ox,oy:view.oy,scale:view.scale,rot:view.rot}, wmid:null,
+        t0:Date.now(), moved:false};
   var c=Math.cos(gest.v0.rot), s=Math.sin(gest.v0.rot);
   var dx=(gest.mid0.x-gest.v0.ox)/gest.v0.scale, dy=(gest.mid0.y-gest.v0.oy)/gest.v0.scale;
   gest.wmid={x:dx*c+dy*s, y:-dx*s+dy*c};
@@ -1066,6 +1069,7 @@ function updateGesture(){
   var rot=gest.v0.rot+(Math.abs(dr)>0.12?dr:0);          /* kleine Totzone gegen Zittern */
   var snap=Math.round(rot/(Math.PI/2))*(Math.PI/2);
   if(Math.abs(rot-snap)<7*Math.PI/180) rot=snap;         /* rastet bei 0/90/180/270° ein */
+  if(Math.hypot(mid.x-gest.mid0.x,mid.y-gest.mid0.y)>14||Math.abs(d/gest.d0-1)>0.06||Math.abs(dr)>0.14) gest.moved=true;
   var scale=clamp(gest.v0.scale*(d/Math.max(1,gest.d0)),0.05,16);
   var c=Math.cos(rot), s=Math.sin(rot), wm=gest.wmid;
   view.rot=rot; view.scale=scale;
@@ -1074,6 +1078,12 @@ function updateGesture(){
   req();
 }
 function startSwipe3(){ var a=touchAvg(); swipe3={t0:Date.now(),x0:a.x,y0:a.y,x:a.x,y:a.y}; }
+function evalTap3(){
+  if(!swipe3) return false;
+  var moved=Math.hypot(swipe3.x-swipe3.x0,swipe3.y-swipe3.y0);
+  if(Date.now()-swipe3.t0<320&&moved<16){ doRedo(); return true; }
+  return false;
+}
 function updateSwipe3(){ if(!swipe3) return; var a=touchAvg(); swipe3.x=a.x; swipe3.y=a.y; }
 function evalSwipe3(){
   if(!swipe3) return;
@@ -1126,8 +1136,10 @@ function fingerBegin(){
   if(!l||l.typ!=='pixel'){ toast('Wischfinger gibt es in der Pixel-Linse'); fingerDraw=null; touchMode='ignore'; return; }
   if(l.vorlage){ toast('\u201E'+l.name+'\u201C ist eine Vorlage'); fingerDraw=null; touchMode='ignore'; return; }
   var pt=s2w(fingerDraw.x,fingerDraw.y);
-  drag={kind:'fx',l:l,fx:'smudge',last:pt,start:pt,id:fingerDraw.id};
+  preSnap(l);
+  drag={kind:'fx',l:l,fx:'smudge',last:pt,start:pt,id:fingerDraw.id,bb:null};
   painting=true; strokePid=fingerDraw.id;
+  fxStart(l,pt,0.85);
   fxDab(l,pt,0.85); req();
   toast('Wischfinger');
 }
@@ -1239,9 +1251,14 @@ function onPointerUp(e){
       if(typeof saveFarben==='function') saveFarben();
       toast('Farbe: '+String(color).toUpperCase());
     } else if(touchMode==='swipe3'){
-      if(m===0){ evalSwipe3(); swipe3=null; touchMode=null; }
+      /* kurzer Tipp mit drei Fingern: Wieder vor */
+      if(m===0){ if(!evalTap3()) evalSwipe3(); swipe3=null; touchMode=null; }
     } else if(touchMode==='zoom'){
-      if(m<2){ gest=null; touchMode=m>0?'ignore':null; }
+      if(m<2){
+        /* kurzer Tipp mit zwei Fingern, ohne Zoom/Drehung: Zurück */
+        if(gest&&!gest.moved&&Date.now()-gest.t0<320){ doUndo(); }
+        gest=null; touchMode=m>0?'ignore':null;
+      }
     } else if(touchMode==='four'){
       if(m===0){ fourG=null; touchMode=null; }
     } else if(m===0){ touchMode=null; }
@@ -1294,7 +1311,7 @@ function moveStroke(pt,pres){
     invalidate('layout'); req(); }
   else if(k==='mkEl'||k==='selRect'||k==='grad'){ drag.cur=pt; req(); }
   else if(k==='movePix'){ movePixTo(pt); }
-  else if(k==='fx'){ fxDab(drag.l,pt,pres); drag.last=pt; req(); }
+  else if(k==='fx'){ fxRun(drag.l,drag.last,pt,pres); drag.last=pt; req(); }
   else if(k==='movePath'){
     var dx=pt.x-drag.start.x, dy=pt.y-drag.start.y;
     drag.l.data.paths[drag.idx].pts=drag.orig.map(function(q){ return {x:q.x+dx,y:q.y+dy}; });
@@ -1336,8 +1353,11 @@ function endStroke(){
   } else if(d.kind==='movePix'){
     commitMovePix(d);
   } else if(d.kind==='brush'){
-    endBrush();
-  } else if(d.kind==='paint'||d.kind==='fx'){
+    endBrush(d);
+  } else if(d.kind==='fx'){
+    pushPixelUndo(d.l,d.bb);
+    invalidate('pixel');
+  } else if(d.kind==='paint'){
     invalidate('pixel');
   } else if(d.kind==='node'||d.kind==='movePath'){
     invalidate('pfade');
@@ -1360,42 +1380,17 @@ function beginPixel(t,l,pt,pres,pid){
   }
   if(t==='grad'){ drag={kind:'grad',l:l,start:pt,id:pid}; return; }
   if(t==='blur'||t==='smudge'||t==='dodge'||t==='burn'){
-    drag={kind:'fx',l:l,fx:t,last:pt,start:pt,id:pid};
+    preSnap(l);
+    drag={kind:'fx',l:l,fx:t,last:pt,start:pt,id:pid,bb:null};
     painting=true; strokePid=pid;
+    fxStart(l,pt,pres);
     fxDab(l,pt,pres); req(); return;
   }
   beginBrush(l,pt,pres,t==='eraser',pid);
 }
-function fxDab(l,pt,pres){
-  var g=l.data.cv.getContext('2d');
-  var rad=Math.max(2,VALS.draw.v1.val*pres/2), d=rad*2;
-  var x=Math.round(pt.x-rad), y=Math.round(pt.y-rad);
-  if(x<0||y<0||x+d>doc.w||y+d>doc.h||d<1) return;
-  var img;
-  try{ img=g.getImageData(x,y,Math.ceil(d),Math.ceil(d)); }catch(e){ return; }
-  var p=img.data, fx=drag?drag.fx:'blur', k=VALS.draw.v2.val/100;
-  if(fx==='blur'){
-    var cp=new Uint8ClampedArray(p), W=img.width;
-    for(var yy=1;yy<img.height-1;yy++) for(var xx=1;xx<W-1;xx++){
-      for(var c=0;c<4;c++){
-        var i=(yy*W+xx)*4+c;
-        var avg=(cp[i]+cp[i-4]+cp[i+4]+cp[i-W*4]+cp[i+W*4])/5;
-        p[i]=cp[i]+(avg-cp[i])*k;
-      }
-    }
-  } else if(fx==='dodge'||fx==='burn'){
-    var f=(fx==='dodge'?1:-1)*k*40;
-    for(var j=0;j<p.length;j+=4){ p[j]+=f; p[j+1]+=f; p[j+2]+=f; }
-  } else if(fx==='smudge'){
-    var sx=drag&&drag.last?Math.sign(pt.x-drag.last.x):0;
-    var cp2=new Uint8ClampedArray(p), W2=img.width, off=(sx>=0?-1:1)*4;
-    for(var m=4;m<p.length-4;m+=4) for(var c2=0;c2<4;c2++)
-      p[m+c2]=cp2[m+c2]+((cp2[m+off+c2]||cp2[m+c2])-cp2[m+c2])*k;
-  }
-  g.putImageData(img,x,y);
-}
 function liftPix(l){
   if(!sel||floatPix) return;
+  preSnap(l);
   var cv=document.createElement('canvas');
   cv.width=Math.max(1,Math.round(sel.w)); cv.height=Math.max(1,Math.round(sel.h));
   cv.getContext('2d').drawImage(l.data.cv,-sel.x,-sel.y);
@@ -1403,6 +1398,7 @@ function liftPix(l){
   g.save(); g.globalCompositeOperation='destination-out';
   g.fillStyle='#000'; g.fillRect(sel.x,sel.y,sel.w,sel.h); g.restore();
   floatPix={cv:cv,x:sel.x,y:sel.y};
+  pushPixelUndo(l,{x0:0,y0:0,x1:doc.w,y1:doc.h});
   invalidate('pixel');
 }
 function movePixTo(pt){
@@ -1420,6 +1416,7 @@ function commitMovePix(d){
   floatPix=null; invalidate('pixel');
 }
 function applyGradient(l,a,b){
+  preSnap(l);
   var g=l.data.cv.getContext('2d');
   var gr=g.createLinearGradient(a.x,a.y,b.x,b.y);
   var rgb=hexToRgb(color)||{r:0,g:0,b:0};
@@ -1428,6 +1425,7 @@ function applyGradient(l,a,b){
   g.save();
   if(sel){ g.beginPath(); g.rect(sel.x,sel.y,sel.w,sel.h); g.clip(); }
   g.fillStyle=gr; g.fillRect(0,0,doc.w,doc.h); g.restore();
+  pushPixelUndo(l,{x0:0,y0:0,x1:doc.w,y1:doc.h});
   invalidate('pixel'); toast('Verlauf aufgetragen');
 }
 
@@ -1444,6 +1442,7 @@ function beginPfad(t,l,pt,pid,dbl){
   if(t==='sel'||t==='node'){
     var h=hitPath(l,pt);
     overlaySel=h?{layerId:l.id,idx:h.idx,pt:h.pt}:null;
+    if(h) snapLayer(l);
     drag=h?{kind:'node',l:l,idx:h.idx,pt:h.pt,id:pid}:null;
     req(); return;
   }
@@ -1451,10 +1450,12 @@ function beginPfad(t,l,pt,pid,dbl){
     var h2=hitPath(l,pt);
     if(!h2){ toast('Keinen Pfad getroffen'); return; }
     overlaySel={layerId:l.id,idx:h2.idx,pt:h2.pt};
+    snapLayer(l);
     drag={kind:'movePath',l:l,idx:h2.idx,start:pt,
           orig:l.data.paths[h2.idx].pts.map(function(q){ return {x:q.x,y:q.y}; }),id:pid};
     return;
   }
+  snapLayer(l);                       /* Vorzustand für „Zurück" */
   drag={kind:'path',l:l,pts:[pt],start:pt,id:pid};
   painting=true; strokePid=pid;
 }
@@ -1462,12 +1463,13 @@ function beginPfad(t,l,pt,pid,dbl){
 /* ── Layout-Linse ────────────────────────────────────────────────── */
 function beginLayout(t,l,pt,pid,dbl){
   if(t==='text'||t==='frame'||t==='bar'||t==='imgframe'){
+    snapLayer(l);
     drag={kind:'mkEl',l:l,elKind:t,start:pt,id:pid}; return;
   }
   var h=hitEl(l,pt);
   if(h&&dbl){ overlaySel={layerId:l.id,idx:h.idx}; openTextWin(l,h.idx); req(); return; }
   overlaySel=h?{layerId:l.id,idx:h.idx}:null;
-  if(h) drag={kind:'moveEl',l:l,idx:h.idx,start:pt,orig:cloneEl(l.data.els[h.idx]),id:pid};
+  if(h){ snapLayer(l); drag={kind:'moveEl',l:l,idx:h.idx,start:pt,orig:cloneEl(l.data.els[h.idx]),id:pid}; }
   req();
 }
 
@@ -1606,9 +1608,11 @@ function paintLine(l,a,b,p,erase){
   }
 }
 function fillAt(l,pt){
+  preSnap(l);
   var g=l.data.cv.getContext('2d');
   g.save(); g.globalAlpha=VALS.draw.v2.val/100; g.fillStyle=color;
   g.fillRect(0,0,doc.w,doc.h); g.restore();
+  pushPixelUndo(l,{x0:0,y0:0,x1:doc.w,y1:doc.h});
   invalidate('pixel'); toast('Fläche gefüllt'); autosaveSoon(); req();
 }
 function pickAt(pt){
@@ -1621,10 +1625,11 @@ function pickAt(pt){
 }
 function erasePathAt(l,pt){
   var h=hitPath(l,pt);
-  if(h){ l.data.paths.splice(h.idx,1); overlaySel=null; invalidate('pfade'); autosaveSoon(); req(); }
+  if(h){ snapLayer(l); l.data.paths.splice(h.idx,1); overlaySel=null; invalidate('pfade'); autosaveSoon(); req(); }
 }
 var curveOpen=null;
 function addCurvePoint(l,pt){
+  snapLayer(l);
   if(!curveOpen||curveOpen.l!==l){
     curveOpen={l:l,path:{pts:[pt],w:VALS.vektor.v1.val,col:color,closed:false}};
     l.data.paths.push(curveOpen.path);
@@ -1655,9 +1660,9 @@ try{ var rm=localStorage.getItem('koslinse_radmode'); if(rm) rad.mode=rm; }catch
 var radEl=$('rad');
 
 var RADHINT={
-  folgend:'1 Finger schieben \u00B7 2 zoomen+drehen \u00B7 Rad nach 0,3 s Ruhe',
-  fest:'1 Finger schieben \u00B7 2 zoomen+drehen \u00B7 Kern halten verschiebt das Rad',
-  aus:'1 Finger schieben \u00B7 2 zoomen+drehen \u00B7 Rad aus (Befehlsfeld: K)'
+  folgend:'2 Finger tippen = zur\u00FCck \u00B7 3 = wieder vor \u00B7 Rad nach 0,3 s Ruhe',
+  fest:'2 Finger tippen = zur\u00FCck \u00B7 3 = wieder vor \u00B7 Kern halten verschiebt das Rad',
+  aus:'2 Finger tippen = zur\u00FCck \u00B7 3 = wieder vor \u00B7 Rad aus (Taste K)'
 };
 function setRadMode(m){
   rad.mode=m;
@@ -2209,6 +2214,236 @@ function wireClose(w){
 <script>
 'use strict';
 /* ══════════════════════════════════════════════════════════════════════
+   RETUSCHE & VERLAUF (Wischfinger, Weichzeichnen, Aufhellen, Abdunkeln)
+   Weiche runde Marke mit Abstand entlang der Bahn statt eines Rasters —
+   der Wischfinger nimmt Farbe auf und trägt sie weiter (Farbtopf).
+   ══════════════════════════════════════════════════════════════════════ */
+var fxPot=null, fxPotSide=0, fxPotReady=false;
+
+function fxStart(l,pt,pres){
+  var rad=fxRadius(pres);
+  fxPotSide=Math.max(3,Math.ceil(rad*2)+1);
+  fxPot=new Float32Array(fxPotSide*fxPotSide*4);
+  fxPotReady=false;
+}
+function fxRadius(pres){
+  return Math.max(2,VALS.draw.v1.val*(0.35+0.65*(pres==null?1:pres))/2);
+}
+/* Marke an einer Stelle — weicher Rand, kein Kastenrand mehr */
+function fxDab(l,pt,pres){
+  var fx=(drag&&drag.fx)||'smudge';
+  var g=l.data.cv.getContext('2d');
+  var rad=fxRadius(pres);
+  var side=Math.max(3,Math.ceil(rad*2)+1);
+  var ox=Math.round(pt.x-side/2), oy=Math.round(pt.y-side/2);
+  var sx=Math.max(0,ox), sy=Math.max(0,oy);
+  var ex=Math.min(doc.w,ox+side), ey=Math.min(doc.h,oy+side);
+  var w=ex-sx, h=ey-sy;
+  if(w<1||h<1) return;
+  var img;
+  try{ img=g.getImageData(sx,sy,w,h); }catch(e){ return; }
+  var d=img.data;
+  var str=clamp(VALS.draw.v2.val/100,0.02,1);
+  var hard=0.55;
+  if(fx==='smudge'){
+    if(!fxPot||fxPotSide!==side){ fxPot=new Float32Array(side*side*4); fxPotSide=side; fxPotReady=false; }
+    /* Aufnahme bewusst träge: der Topf trägt die Farbe über eine längere
+       Strecke mit — sonst ist sie nach wenigen Marken schon verbraucht.
+       Bei kräftigem Wischen (hohe Deckkraft) hält er sie noch länger.    */
+    var pot=fxPot, pick=clamp(0.16*(1-str*0.55),0.05,0.16);
+    for(var y=0;y<h;y++) for(var x=0;x<w;x++){
+      var px=sx+x, py=sy+y;
+      var dx=(px+0.5)-pt.x, dy=(py+0.5)-pt.y;
+      var dist=Math.hypot(dx,dy)/rad;
+      if(dist>1) continue;
+      var fall=Math.pow(1-dist,1+2*hard);
+      var wgt=fall*str;
+      var i=(y*w+x)*4;
+      var bi=((py-oy)*side+(px-ox))*4;
+      if(bi<0||bi+3>=pot.length) continue;
+      /* mit Alpha vorgewichtet rechnen: keine dunklen Ränder */
+      var a=d[i+3]/255;
+      var r0=d[i]*a, g0=d[i+1]*a, b0=d[i+2]*a, a0=d[i+3];
+      if(!fxPotReady){ pot[bi]=r0; pot[bi+1]=g0; pot[bi+2]=b0; pot[bi+3]=a0; continue; }
+      var nr=r0+(pot[bi]-r0)*wgt;
+      var ng=g0+(pot[bi+1]-g0)*wgt;
+      var nb=b0+(pot[bi+2]-b0)*wgt;
+      var na=a0+(pot[bi+3]-a0)*wgt;
+      pot[bi]  +=(r0-pot[bi])*pick*wgt;                 /* Farbe aufnehmen */
+      pot[bi+1]+=(g0-pot[bi+1])*pick*wgt;
+      pot[bi+2]+=(b0-pot[bi+2])*pick*wgt;
+      pot[bi+3]+=(a0-pot[bi+3])*pick*wgt;
+      var an=na/255;
+      d[i]  =an>0.002?Math.round(nr/an):0;
+      d[i+1]=an>0.002?Math.round(ng/an):0;
+      d[i+2]=an>0.002?Math.round(nb/an):0;
+      d[i+3]=Math.round(clamp(na,0,255));
+    }
+    fxPotReady=true;
+  } else if(fx==='blur'){
+    var src=new Uint8ClampedArray(d);
+    for(var y2=1;y2<h-1;y2++) for(var x2=1;x2<w-1;x2++){
+      var px2=sx+x2, py2=sy+y2;
+      var ddx=(px2+0.5)-pt.x, ddy=(py2+0.5)-pt.y;
+      var dd=Math.hypot(ddx,ddy)/rad;
+      if(dd>1) continue;
+      var wg=Math.pow(1-dd,1+2*hard)*str;
+      var i2=(y2*w+x2)*4;
+      for(var c=0;c<4;c++){
+        var avg=(src[i2+c]*2+src[i2-4+c]+src[i2+4+c]+src[i2-w*4+c]+src[i2+w*4+c])/6;
+        d[i2+c]=src[i2+c]+(avg-src[i2+c])*wg;
+      }
+    }
+  } else {                                   /* aufhellen / abdunkeln */
+    var f=(fx==='dodge'?1:-1)*str*48;
+    for(var y3=0;y3<h;y3++) for(var x3=0;x3<w;x3++){
+      var px3=sx+x3, py3=sy+y3;
+      var e1=(px3+0.5)-pt.x, e2=(py3+0.5)-pt.y;
+      var e3=Math.hypot(e1,e2)/rad;
+      if(e3>1) continue;
+      var wg3=Math.pow(1-e3,1+2*hard);
+      var i3=(y3*w+x3)*4;
+      if(!d[i3+3]) continue;
+      d[i3]  =clamp(d[i3]  +f*wg3,0,255);
+      d[i3+1]=clamp(d[i3+1]+f*wg3,0,255);
+      d[i3+2]=clamp(d[i3+2]+f*wg3,0,255);
+    }
+  }
+  g.putImageData(img,sx,sy);
+  fxMark(sx,sy,w,h);
+}
+/* Marken dicht an dicht entlang der Bahn: keine Lücken bei schneller Hand */
+function fxRun(l,a,b,pres){
+  var rad=fxRadius(pres);
+  var step=Math.max(1,rad*0.22);
+  var dist=Math.hypot(b.x-a.x,b.y-a.y);
+  var n=Math.max(1,Math.ceil(dist/step));
+  for(var i=1;i<=n;i++){
+    fxDab(l,{x:a.x+(b.x-a.x)*i/n, y:a.y+(b.y-a.y)*i/n},pres);
+  }
+}
+function fxMark(x,y,w,h){
+  if(!drag) return;
+  var bb=drag.bb;
+  if(!bb) drag.bb={x0:x,y0:y,x1:x+w,y1:y+h};
+  else {
+    bb.x0=Math.min(bb.x0,x); bb.y0=Math.min(bb.y0,y);
+    bb.x1=Math.max(bb.x1,x+w); bb.y1=Math.max(bb.y1,y+h);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ZURÜCK / WIEDERHOLEN
+   Pixel: nur der veränderte Ausschnitt wird gesichert (wie Draw v29).
+   Pfade, Layout, Stapel: knappe Abbilder als JSON.
+   ══════════════════════════════════════════════════════════════════════ */
+var undoStack=[], redoStack=[], undoBytes=0;
+var UNDO_MAX=40, UNDO_BUDGET=140e6;
+var preCv=null, preCx=null;                 /* Abzug der Ebene vor dem Strich */
+function entryBytes(e){
+  if(e.t==='pixels') return e.w*e.h*4;
+  return 4000;
+}
+function trimUndo(){
+  while(undoStack.length>UNDO_MAX||undoBytes>UNDO_BUDGET){
+    var o=undoStack.shift();
+    if(!o) break;
+    undoBytes-=entryBytes(o);
+  }
+}
+function pushUndo(e){
+  undoStack.push(e);
+  undoBytes+=entryBytes(e);
+  redoStack.length=0;
+  trimUndo();
+}
+/* Abzug der Ebene anlegen, bevor ein Pixelstrich beginnt */
+function preSnap(l){
+  if(!preCv||preCv.width!==doc.w||preCv.height!==doc.h){
+    preCv=document.createElement('canvas');
+    preCv.width=doc.w; preCv.height=doc.h;
+    preCx=preCv.getContext('2d');
+  }
+  preCx.setTransform(1,0,0,1,0,0);
+  preCx.clearRect(0,0,doc.w,doc.h);
+  preCx.drawImage(l.data.cv,0,0);
+}
+/* Ausschnitt aus dem Abzug sichern */
+function pushPixelUndo(l,bb){
+  if(!bb||!preCx) return;
+  var x=clamp(Math.floor(bb.x0)-2,0,doc.w-1), y=clamp(Math.floor(bb.y0)-2,0,doc.h-1);
+  var w=clamp(Math.ceil(bb.x1-bb.x0)+4,1,doc.w-x), h=clamp(Math.ceil(bb.y1-bb.y0)+4,1,doc.h-y);
+  try{
+    pushUndo({t:'pixels',layerId:l.id,x:x,y:y,w:w,h:h,data:preCx.getImageData(x,y,w,h)});
+  }catch(e){}
+}
+function snapLayer(l){
+  if(!l) return;
+  if(l.typ==='pfade') pushUndo({t:'paths',layerId:l.id,data:JSON.stringify(l.data.paths)});
+  else if(l.typ==='layout') pushUndo({t:'els',layerId:l.id,data:JSON.stringify(l.data.els,function(k,v){return k==='img'?undefined:v;})});
+  else if(l.typ==='pixel'){
+    preSnap(l);
+    pushPixelUndo(l,{x0:0,y0:0,x1:doc.w,y1:doc.h});
+  }
+}
+function snapStack(){
+  pushUndo({t:'stack',order:doc.stack.slice(),active:JSON.stringify(activeByLens)});
+}
+function applyEntry(e){
+  var back=null;
+  if(e.t==='pixels'){
+    var l=layerById(e.layerId);
+    if(!l||l.typ!=='pixel') return null;
+    var g=l.data.cv.getContext('2d');
+    try{
+      back={t:'pixels',layerId:e.layerId,x:e.x,y:e.y,w:e.w,h:e.h,data:g.getImageData(e.x,e.y,e.w,e.h)};
+      g.putImageData(e.data,e.x,e.y);
+    }catch(err){ return null; }
+    invalidate('pixel');
+  } else if(e.t==='paths'){
+    var l2=layerById(e.layerId);
+    if(!l2) return null;
+    back={t:'paths',layerId:e.layerId,data:JSON.stringify(l2.data.paths)};
+    l2.data.paths=JSON.parse(e.data);
+    invalidate('pfade');
+  } else if(e.t==='els'){
+    var l3=layerById(e.layerId);
+    if(!l3) return null;
+    back={t:'els',layerId:e.layerId,data:JSON.stringify(l3.data.els,function(k,v){return k==='img'?undefined:v;})};
+    l3.data.els=JSON.parse(e.data);
+    invalidate('layout');
+  } else if(e.t==='stack'){
+    back={t:'stack',order:doc.stack.slice(),active:JSON.stringify(activeByLens)};
+    doc.stack=e.order.slice();
+    try{ var a=JSON.parse(e.active); Object.keys(a).forEach(function(k){ activeByLens[k]=a[k]; }); }catch(err){}
+    ['pixel','pfade','layout'].forEach(invalidate);
+  }
+  overlaySel=null;
+  return back;
+}
+function doUndo(){
+  if(drag){ toast('Erst den Strich beenden'); return; }
+  var e=undoStack.pop();
+  if(!e){ toast('Nichts r\u00FCckg\u00E4ngig zu machen'); return; }
+  undoBytes-=entryBytes(e);
+  var back=applyEntry(e);
+  if(back) redoStack.push(back);
+  renderStack(); autosaveSoon(); req();
+  toast('Zur\u00FCck');
+}
+function doRedo(){
+  if(drag) return;
+  var e=redoStack.pop();
+  if(!e){ toast('Nichts zu wiederholen'); return; }
+  var back=applyEntry(e);
+  if(back){ undoStack.push(back); undoBytes+=entryBytes(back); trimUndo(); }
+  renderStack(); autosaveSoon(); req();
+  toast('Wieder vor');
+}
+</script>
+<script>
+'use strict';
+/* ══════════════════════════════════════════════════════════════════════
    PINSEL — Stempelmaschine aus K-OS Draw v29 (Pixel)
             Profil-/Spitzenmodell aus K-OS Vektor v22 (Pfade)
             Fenster nach Kos-Linse-Prototyp VII
@@ -2383,10 +2618,11 @@ function ensureStrokeCv(){
 }
 function beginBrush(l,pt,pres,erase,pid){
   var b=erase?getBrush('hart','px'):curBrush();
+  preSnap(l);                                   /* Abzug für „Zurück" */
   ensureStrokeCv();
   strokeCx.setTransform(1,0,0,1,0,0);
   strokeCx.clearRect(0,0,doc.w,doc.h);
-  brushRun={b:b,l:l,erase:erase,acc:0,first:true,ang:0,
+  brushRun={b:b,l:l,erase:erase,acc:0,first:true,ang:0,bb:null,
             sm:{x:pt.x,y:pt.y},smP:pres,last:{x:pt.x,y:pt.y,p:pres}};
   drag={kind:'brush',l:l,erase:erase,start:pt,last:pt,id:pid};
   painting=true; strokePid=pid;
@@ -2454,12 +2690,20 @@ function stampAt(b,x,y,p,ang){
       g.translate(sx,sy); g.rotate(rot);
       g.drawImage(st,-st.width*sc/2,-st.height*sc/2,st.width*sc,st.height*sc);
       g.restore();
+      var rr=Math.max(st.width,st.height)*sc/2+2;
+      var bb=brushRun.bb;
+      if(!bb) brushRun.bb={x0:sx-rr,y0:sy-rr,x1:sx+rr,y1:sy+rr};
+      else {
+        bb.x0=Math.min(bb.x0,sx-rr); bb.y0=Math.min(bb.y0,sy-rr);
+        bb.x1=Math.max(bb.x1,sx+rr); bb.y1=Math.max(bb.y1,sy+rr);
+      }
     }
   });
 }
-function endBrush(){
+function endBrush(d){
   if(!brushRun) return;
   var r=brushRun; brushRun=null;
+  pushPixelUndo(r.l,r.bb||{x0:0,y0:0,x1:doc.w,y1:doc.h});
   if(!r.erase){
     var g=r.l.data.cv.getContext('2d');
     g.save();
@@ -2800,6 +3044,7 @@ function insertAbove(refLayer,nl){
 }
 /* Pixel → Pfade (Marching Squares auf Alphakanal + Vereinfachung) */
 function vektorisieren(l){
+  snapStack();
   var g=l.data.cv.getContext('2d');
   var img=g.getImageData(0,0,doc.w,doc.h);
   var paths=traceAlpha(img,doc.w,doc.h);
@@ -2865,6 +3110,7 @@ function ptSeg(p,a,b){
 }
 /* Pfade/Layout → Pixel */
 function rastern(l){
+  snapStack();
   var nl=pixelLayer(l.name.replace(' (Vorlage)','')+' → Pixel');
   var g=nl.data.cv.getContext('2d');
   g.globalAlpha=1; drawLayer(g,l,false);
@@ -2874,6 +3120,7 @@ function rastern(l){
 }
 /* Pixel/Pfade → Layout (als Bildrahmen) */
 function alsRahmen(l){
+  snapStack();
   var cv=document.createElement('canvas'); cv.width=doc.w; cv.height=doc.h;
   var g=cv.getContext('2d'); drawLayer(g,l,false);
   var target=layersOf('layout').filter(function(x){return !x.vorlage;}).pop();
@@ -3215,8 +3462,9 @@ function openTextWin(l,idx){
     inp.addEventListener('keydown',function(ev){ if(ev.key==='Enter'){ apply(); closeWins(); } });
     setTimeout(function(){ try{ inp.focus(); inp.select(); }catch(err){} },30);
   }
-  $('txCol').addEventListener('click',function(){ e.col=color; invalidate('layout'); autosaveSoon(); req(); toast('Farbe angewendet'); });
+  $('txCol').addEventListener('click',function(){ snapLayer(l); e.col=color; invalidate('layout'); autosaveSoon(); req(); toast('Farbe angewendet'); });
   $('txDel').addEventListener('click',function(){
+    snapLayer(l);
     l.data.els.splice(idx,1); overlaySel=null; invalidate('layout'); closeWins(); autosaveSoon(); req(); toast('Element gel\u00F6scht');
   });
   $('txUp').addEventListener('click',function(){
@@ -3270,11 +3518,13 @@ function openLayerWin(l){
   });
   $('lyUp').addEventListener('click',function(){
     if(i>=doc.stack.length-1) return;
+    snapStack();
     doc.stack.splice(i,1); doc.stack.splice(i+1,0,l);
     invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins();
   });
   $('lyDn').addEventListener('click',function(){
     if(i<=0) return;
+    snapStack();
     doc.stack.splice(i,1); doc.stack.splice(i-1,0,l);
     invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins();
   });
@@ -3289,6 +3539,7 @@ function openLayerWin(l){
     invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins(); toast('Vorlage aufgehoben');
   });
   if($('lyDel')) $('lyDel').addEventListener('click',function(){
+    snapStack();
     doc.stack.splice(i,1);
     if(activeByLens[lens]===l.id) activeByLens[lens]=null;
     overlaySel=null; invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins(); toast('Ebene gel\u00F6scht');
@@ -3308,6 +3559,8 @@ function commands(){
   UEB[lens].forEach(function(u){ c.push({t:'\u00DCbergabe: '+u.t,k:LENS[lens].sicht,fn:u.fn}); });
   c.push({t:'Ebene duplizieren',k:'Stapel',fn:dupLayer});
   c.push({t:'Neue Ebene',k:'Stapel',fn:addLayerCmd});
+  c.push({t:'Zur\u00FCck',k:'Bearbeiten',fn:doUndo});
+  c.push({t:'Wieder vor',k:'Bearbeiten',fn:doRedo});
   c.push({t:'Ansicht einpassen',k:'Ansicht',fn:function(){fitView();req();}});
   c.push({t:'Datei speichern (.kos)',k:'Datei',fn:saveKos});
   c.push({t:'In die Ablage legen (Dropbox)',k:'Ablage',fn:dbxSaveKos});
@@ -3324,6 +3577,7 @@ function commands(){
 }
 function dupLayer(){
   var l=activeLayer(); if(!l) return;
+  snapStack();
   var nl;
   if(l.typ==='pixel'){ nl=pixelLayer(l.name+' Kopie'); nl.data.cv.getContext('2d').drawImage(l.data.cv,0,0); }
   else nl=mkLayer(l.typ,l.name+' Kopie',JSON.parse(JSON.stringify(l.data,function(k,v){return v&&v.getContext?undefined:v;})));
@@ -3333,6 +3587,7 @@ function dupLayer(){
   toast('Ebene dupliziert');
 }
 function addLayerCmd(){
+  snapStack();
   var typ=LENS[lens].typ, nl;
   if(typ==='pixel') nl=pixelLayer('Pixel '+(layersOf('pixel').length+1));
   else if(typ==='pfade') nl=mkLayer('pfade','Pfade '+(layersOf('pfade').length+1),{paths:[]});
@@ -3787,6 +4042,8 @@ document.addEventListener('keydown',function(e){
   else if(k==='escape'){ closeWins(); rad.fan=null; rad.big=false; radRelayout(); }
   /* Datei */
   else if(k==='s'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); saveKos(); }
+  else if(k==='z'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); if(e.shiftKey) doRedo(); else doUndo(); }
+  else if(k==='y'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); doRedo(); }
 });
 /* Klick neben Fenster schließt sie */
 document.addEventListener('pointerdown',function(e){
@@ -3856,7 +4113,11 @@ window.KOSL={
   makeStamp:makeStamp, pathWidthAt:pathWidthAt, paintPath:paintPath,
   buildBrushPanel:buildBrushPanel, tipPreview:tipPreview, saveBrushes:saveBrushes, loadBrushes:loadBrushes,
   get brushRun(){return brushRun;}, get strokeCv(){return strokeCv;},
-  get pinTips(){return pinTips;}, get touchActive(){return touchActive();}
+  get pinTips(){return pinTips;}, get touchActive(){return touchActive();},
+  doUndo:doUndo, doRedo:doRedo, snapLayer:snapLayer, snapStack:snapStack, preSnap:preSnap,
+  get undoStack(){return undoStack;}, get redoStack(){return redoStack;},
+  fxDab:fxDab, fxRun:fxRun, fxStart:fxStart, get fxPot(){return fxPot;},
+  dressWin:dressWin, applyWinGeo:applyWinGeo, get winGeo(){return winGeo;}, isPinned:isPinned
 };
 </script>
 </body>
