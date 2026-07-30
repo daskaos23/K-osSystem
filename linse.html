@@ -147,8 +147,25 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
 
 /* ══════════ FENSTER (Farbe/Pinsel/Lineal) + ÜBERGABE ══════════ */
 .win{position:absolute;background:var(--panel2);border:1px solid var(--line2);border-radius:13px;
-  box-shadow:0 20px 46px -14px rgba(0,0,0,.95);padding:12px;display:none;z-index:70;pointer-events:auto;width:270px}
-.win.show{display:block}
+  box-shadow:0 20px 46px -14px rgba(0,0,0,.95);padding:10px 12px 12px;display:none;z-index:70;
+  pointer-events:auto;width:270px;max-height:78vh;flex-direction:column;min-width:210px;min-height:120px}
+.win.show{display:flex}
+.win.pinned{border-color:var(--ac);box-shadow:0 20px 46px -14px rgba(0,0,0,.95),0 0 0 1px var(--ac) inset}
+.winbar{flex:0 0 auto;display:flex;align-items:center;gap:6px;cursor:move;touch-action:none;
+  margin:-4px -4px 8px;padding:2px 2px 7px;border-bottom:1px solid var(--line)}
+.winbar .wt{flex:1;font:10px 'JetBrains Mono',monospace;letter-spacing:.18em;color:var(--tx2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.winbar button{width:26px;height:24px;border:1px solid var(--line);background:#11181d;color:var(--tx3);
+  border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.winbar button.on{border-color:var(--ac);color:var(--ac)}
+.winbody{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;
+  -webkit-overflow-scrolling:touch;padding-right:3px;scrollbar-width:thin}
+.winbody::-webkit-scrollbar{width:7px}
+.winbody::-webkit-scrollbar-thumb{background:#2b3a44;border-radius:4px}
+.winbody .wx{display:none}
+.wgrip{position:absolute;right:3px;bottom:3px;width:22px;height:22px;cursor:nwse-resize;touch-action:none;
+  border-right:2px solid var(--line2);border-bottom:2px solid var(--line2);border-radius:0 0 11px 0;opacity:.8}
+.wgrip:hover{border-color:var(--ac)}
 .win h5{font:10px 'JetBrains Mono',monospace;letter-spacing:.2em;color:var(--tx3);margin:8px 0 6px}
 .win h5:first-child{margin-top:0}
 .win .wx{position:absolute;right:8px;top:6px;border:0;background:none;color:var(--tx3);font-size:15px;cursor:pointer}
@@ -533,11 +550,16 @@ function render(){
     if(a<=0.001) return;
     g.globalAlpha=a; g.drawImage(buildGhost(t),0,0);
   });
-  /* 3. Eigene Ebenen voll, in Stapelreihenfolge */
+  /* 3. Eigene Ebenen voll, in Stapelreihenfolge —
+        der laufende Strich liegt live auf seiner Ebene */
   doc.stack.forEach(function(l){
     if(l.typ!==own||!l.visible) return;
     g.globalAlpha=l.opacity*(l.vorlage?0.5:1);
     drawLayer(g,l,false);
+    if(typeof brushRun!=='undefined'&&brushRun&&brushRun.l===l&&!brushRun.erase&&strokeCv){
+      g.globalAlpha=l.opacity*clamp(VALS.draw.v2.val/100,0,1);
+      g.drawImage(strokeCv,0,0);
+    }
   });
   g.globalAlpha=1; g.restore();
   drawOverlays(g);
@@ -1956,20 +1978,146 @@ function buildBig(){
   });
 }
 
-/* ══════════ FENSTER ══════════ */
+/* ══════════════════════════════════════════════════════════════════
+   FENSTER — frei beweglich, skalierbar, feststellbar, rollbar.
+   Lage, Größe und Feststellung bleiben je Fenster gespeichert.
+   ══════════════════════════════════════════════════════════════════ */
 var WINS=['winColor','winBrush','winRuler','uebmenu','winfile','winText','winLayer'];
+var WINTITLE={winColor:'FARBE',winBrush:'PINSEL',winRuler:'HILFSLINIEN',uebmenu:'\u00DCBERGABE',
+              winfile:'DATEI',winText:'ELEMENT',winLayer:'EBENE'};
+var winGeo={};
+try{ winGeo=JSON.parse(localStorage.getItem('koslinse_wins')||'{}')||{}; }catch(e){ winGeo={}; }
+function saveWinGeo(){ try{ localStorage.setItem('koslinse_wins',JSON.stringify(winGeo)); }catch(e){} }
+function isPinned(id){ return !!(winGeo[id]&&winGeo[id].pin); }
+/* Inhalt in einen rollbaren Rumpf setzen und Leiste + Griff ergänzen.
+   Die Knoten werden verschoben, nicht neu erzeugt — Ereignisse bleiben. */
+function dressWin(id){
+  var w=$(id);
+  if(!w) return;
+  var body=document.createElement('div');
+  body.className='winbody';
+  while(w.firstChild) body.appendChild(w.firstChild);
+  var bar=document.createElement('div');
+  bar.className='winbar';
+  var t=document.createElement('span');
+  t.className='wt'; t.textContent=WINTITLE[id]||'FENSTER';
+  var pin=document.createElement('button');
+  pin.innerHTML='\u{1F4CC}';
+  pin.title='Fenster festhalten \u2014 bleibt offen, bis du es schlie\u00DFt';
+  if(isPinned(id)) pin.classList.add('on');
+  var cl=document.createElement('button');
+  cl.innerHTML='\u2715'; cl.title='Schlie\u00DFen';
+  bar.appendChild(t); bar.appendChild(pin); bar.appendChild(cl);
+  var grip=document.createElement('div');
+  grip.className='wgrip'; grip.title='Gr\u00F6\u00DFe \u00E4ndern';
+  w.appendChild(bar); w.appendChild(body); w.appendChild(grip);
+  w.classList.toggle('pinned',isPinned(id));
+  pin.addEventListener('pointerdown',function(e){ e.stopPropagation(); });
+  pin.addEventListener('click',function(e){
+    e.stopPropagation();
+    winGeo[id]=winGeo[id]||{};
+    winGeo[id].pin=!winGeo[id].pin;
+    saveWinGeo();
+    pin.classList.toggle('on',winGeo[id].pin);
+    w.classList.toggle('pinned',winGeo[id].pin);
+    toast(winGeo[id].pin?'Fenster festgehalten':'Fenster wieder frei');
+  });
+  cl.addEventListener('pointerdown',function(e){ e.stopPropagation(); });
+  cl.addEventListener('click',function(e){ e.stopPropagation(); w.classList.remove('show'); });
+  dragWin(w,bar,id);
+  sizeWin(w,grip,id);
+  applyWinGeo(id);
+}
+function winArea(){
+  var r=$('stagewrap').getBoundingClientRect();
+  return {w:r.width||900,h:r.height||600};
+}
+function applyWinGeo(id){
+  var w=$(id), g=winGeo[id];
+  if(!w) return;
+  var a=winArea();
+  w.style.transform='none';
+  if(g&&typeof g.x==='number'){
+    w.style.width=(g.w||270)+'px';
+    if(g.h) w.style.height=g.h+'px';
+    w.style.left=clamp(g.x,0,Math.max(0,a.w-90))+'px';
+    w.style.top=clamp(g.y,0,Math.max(0,a.h-60))+'px';
+    w.style.right='auto'; w.style.bottom='auto';
+    return;
+  }
+  var wd=w.offsetWidth||270;
+  w.style.left=Math.max(8,(a.w-wd)/2)+'px';
+  w.style.top='58px';
+  w.style.right='auto';
+}
+function rememberWin(id){
+  var w=$(id);
+  winGeo[id]=winGeo[id]||{};
+  winGeo[id].x=parseFloat(w.style.left)||0;
+  winGeo[id].y=parseFloat(w.style.top)||0;
+  winGeo[id].w=parseFloat(w.style.width)||w.offsetWidth||270;
+  winGeo[id].h=parseFloat(w.style.height)||w.offsetHeight||0;
+  saveWinGeo();
+}
+function dragWin(w,handle,id){
+  var st=null;
+  handle.addEventListener('pointerdown',function(e){
+    if(e.target.tagName==='BUTTON') return;
+    e.preventDefault(); e.stopPropagation();
+    try{ handle.setPointerCapture(e.pointerId); }catch(err){}
+    st={x:e.clientX,y:e.clientY,l:parseFloat(w.style.left)||0,t:parseFloat(w.style.top)||0};
+    w.style.transform='none';
+  });
+  handle.addEventListener('pointermove',function(e){
+    if(!st) return;
+    e.preventDefault();
+    var a=winArea();
+    w.style.left=clamp(st.l+(e.clientX-st.x),-w.offsetWidth+80,a.w-70)+'px';
+    w.style.top=clamp(st.t+(e.clientY-st.y),0,a.h-44)+'px';
+  });
+  ['pointerup','pointercancel'].forEach(function(evn){
+    handle.addEventListener(evn,function(){ if(st){ st=null; rememberWin(id); } });
+  });
+}
+function sizeWin(w,grip,id){
+  var st=null;
+  grip.addEventListener('pointerdown',function(e){
+    e.preventDefault(); e.stopPropagation();
+    try{ grip.setPointerCapture(e.pointerId); }catch(err){}
+    st={x:e.clientX,y:e.clientY,
+        w:parseFloat(w.style.width)||w.offsetWidth||270,
+        h:parseFloat(w.style.height)||w.offsetHeight||320};
+  });
+  grip.addEventListener('pointermove',function(e){
+    if(!st) return;
+    e.preventDefault();
+    var a=winArea();
+    w.style.width=clamp(st.w+(e.clientX-st.x),210,Math.max(240,a.w-20))+'px';
+    w.style.height=clamp(st.h+(e.clientY-st.y),140,Math.max(180,a.h-20))+'px';
+    w.style.maxHeight='none';
+  });
+  ['pointerup','pointercancel'].forEach(function(evn){
+    grip.addEventListener(evn,function(){ if(st){ st=null; rememberWin(id); } });
+  });
+}
 function openWin(id){
-  WINS.forEach(function(w){ $(w).classList.remove('show'); });
+  closeWins();
   var el=$(id);
   if(id==='winColor') buildColorWin();
-  if(id==='winBrush') buildBrushWin();
-  if(id==='winRuler') buildRulerWin();
-  el.style.left='50%'; el.style.top='60px'; el.style.transform='translateX(-50%)';
-  if(id==='uebmenu'){ el.style.left=''; el.style.transform=''; el.style.right='10px'; el.style.top='52px'; }
+  else if(id==='winBrush') buildBrushWin();
+  else if(id==='winRuler') buildRulerWin();
+  else if(!el.querySelector('.winbar')) dressWin(id);
   el.classList.add('show');
+  applyWinGeo(id);
   rad.fan=null; rad.big=false; radRelayout();
 }
-function closeWins(){ WINS.forEach(function(w){ $(w).classList.remove('show'); }); }
+/* schließt nur, was nicht festgehalten ist */
+function closeWins(force){
+  WINS.forEach(function(w){
+    if(!force&&isPinned(w)) return;
+    $(w).classList.remove('show');
+  });
+}
 function openToolWin(t){
   if(t==='pick') openWin('winColor');
   else if(t==='brush'||t==='pen'||t==='curve') openWin('winBrush');
@@ -2051,6 +2199,7 @@ function buildRulerWin(){
     });
   });
   wireClose(w);
+  dressWin('winRuler');
 }
 function wireClose(w){
   var x=w.querySelector('.wx');
@@ -2633,6 +2782,8 @@ function buildBrushPanel(){
     toast('Eigene Spitze gel\u00F6scht');
   });
   wireClose(w);
+  dressWin('winBrush');
+  applyWinGeo('winBrush');
 }
 </script>
 <script>
@@ -2787,7 +2938,9 @@ function openUeb(){
     });
   });
   wireClose(w);
-  openWin('uebmenu');
+  dressWin('uebmenu');
+  $('uebmenu').classList.add('show');
+  applyWinGeo('uebmenu');
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2983,6 +3136,7 @@ function buildColorPanel(){
   });
   drawSV(); drawHue();
   wireClose(w);
+  dressWin('winColor');
 }
 function bindCanvasDrag(el,fn){
   if(!el) return;
@@ -3050,7 +3204,9 @@ function openTextWin(l,idx){
     +'<div class="frow"><button class="hbtn" id="txUp">Nach vorn</button><button class="hbtn" id="txDown">Nach hinten</button></div>'
     +'<div class="mono" style="font-size:11px;color:var(--tx3);margin-top:8px">'
     +(isText?'Schrift und Laufweite wirken \u00FCber die Regler im Rad und im Panel.':'Gr\u00F6\u00DFe durch Ziehen an der Fl\u00E4che.')+'</div>';
-  openWin('winText');
+  dressWin('winText');
+  $('winText').classList.add('show');
+  applyWinGeo('winText');
   if(isText){
     var inp=$('txIn');
     var apply=function(){ e.text=inp.value; invalidate('layout'); autosaveSoon(); req(); };
@@ -3101,7 +3257,9 @@ function openLayerWin(l){
     +'<button class="hbtn" id="lyDup">Duplizieren</button></div>'
     +'<div class="frow">'+(l.vorlage?'<button class="hbtn" id="lyVor">Vorlage aufheben</button>':'')
     +(l.typ==='material'?'':'<button class="hbtn" id="lyDel">L\u00F6schen</button>')+'</div>';
-  openWin('winLayer');
+  dressWin('winLayer');
+  $('winLayer').classList.add('show');
+  applyWinGeo('winLayer');
   $('lyOp').addEventListener('input',function(){
     l.opacity=Number(this.value)/100; $('lyOpV').textContent=this.value+' %';
     invalidate(l.typ); renderStack(); req();
@@ -3532,8 +3690,12 @@ $('uebBtn').addEventListener('click',function(){
   if($('uebmenu').classList.contains('show')) closeWins(); else openUeb();
 });
 $('fileBtn').addEventListener('click',function(){
-  if($('winfile').classList.contains('show')) closeWins();
-  else { closeWins(); $('winfile').classList.add('show'); dbxState(); }
+  if($('winfile').classList.contains('show')) closeWins(true);
+  else {
+    closeWins();
+    if(!$('winfile').querySelector('.winbar')) dressWin('winfile');
+    $('winfile').classList.add('show'); applyWinGeo('winfile'); dbxState();
+  }
 });
 wireClose($('winfile'));
 $('kosSave').addEventListener('click',function(){ closeWins(); saveKos(); });
@@ -3629,7 +3791,7 @@ document.addEventListener('keydown',function(e){
 /* Klick neben Fenster schließt sie */
 document.addEventListener('pointerdown',function(e){
   if(e.target.closest&&(e.target.closest('.win')||e.target.closest('#uebBtn')||e.target.closest('#fileBtn')||e.target.closest('#cmd'))) return;
-  closeWins();
+  closeWins();          /* festgehaltene Fenster bleiben stehen */
   if(!e.target.closest||!e.target.closest('#cmd')) $('cmdlist').classList.remove('show');
 },true);
 
