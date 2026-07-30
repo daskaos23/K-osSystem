@@ -231,6 +231,8 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
     <div class="win" id="winBrush"></div>
     <div class="win" id="winRuler"></div>
     <div class="win" id="uebmenu"></div>
+    <div class="win" id="winText"></div>
+    <div class="win" id="winLayer"></div>
     <div class="win" id="winfile">
       <button class="wx" data-close="winfile">&#10005;</button>
       <h5>Datei &#183; .kos-Container</h5>
@@ -241,6 +243,13 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
       <div class="frow">
         <button class="hbtn" id="kosNew">Neues Dokument</button>
       </div>
+      <h5>Ablage &#183; Dropbox (&#252;ber K-OS Files)</h5>
+      <div class="frow">
+        <button class="hbtn" id="dbxSave">&#8681; In Ablage</button>
+        <button class="hbtn" id="dbxList">&#8635; Aus Ablage &#8230;</button>
+      </div>
+      <div id="dbxState" class="mono" style="font-size:11px;color:var(--tx3);margin-top:7px"></div>
+      <div id="dbxFiles"></div>
       <input type="file" id="kosFile" accept=".kos,.zip" style="display:none">
     </div>
     <div id="toast" class="mono"></div>
@@ -567,8 +576,37 @@ function setDurchblick(v){
   try{ localStorage.setItem('koslinse_db',String(durchblick)); }catch(e){}
   renderBadges(); req();
 }
+function guideLabel(){
+  var RN={gerade:'Gerade '+guide.ang+'\u00B0',winkel:'Winkel 15\u00B0',persp:'Perspektive',ellipse:'Ellipse',kreis:'Kreis'};
+  var MN={x:'Spiegel 1 Achse',xy:'Spiegel 2 Achsen',radial:'Spiegel radial '+guide.axes};
+  var a=[];
+  if(RN[guide.rule]) a.push(RN[guide.rule]);
+  if(MN[guide.mirror]) a.push(MN[guide.mirror]);
+  return a.join(' \u00B7 ');
+}
 function renderBadges(){
   var own=LENS[lens].typ, host=$('badges'); host.innerHTML='';
+  if(lens!=='studio'){
+    var gl=guideLabel();
+    if(gl){
+      var gb=document.createElement('div');
+      gb.className='badge'; gb.id='guideBadge';
+      gb.style.setProperty('--c',LENS[lens].c);
+      gb.style.borderColor=LENS[lens].c+'66';
+      gb.innerHTML='<span class="p"></span>'+gl+' \u00B7 aus';
+      gb.title='Antippen: Hilfslinien-Fenster \u00B7 lange dr\u00FCcken: alles aus';
+      var gT=0,gF=false;
+      gb.addEventListener('pointerdown',function(ev){
+        ev.preventDefault(); gF=false;
+        gT=setTimeout(function(){ gF=true; setGuide('rule','aus'); setGuide('mirror','aus'); toast('Hilfslinien aus'); },450);
+      });
+      ['pointerup','pointercancel','pointerleave'].forEach(function(evn){
+        gb.addEventListener(evn,function(){ clearTimeout(gT); });
+      });
+      gb.addEventListener('click',function(){ if(!gF) openWin('winRuler'); gF=false; });
+      host.appendChild(gb);
+    }
+  }
   ['pixel','pfade','layout'].forEach(function(t){
     if(t===own) return;
     var b=document.createElement('div');
@@ -601,7 +639,16 @@ function renderStack(){
       ev.stopPropagation();
       l.visible=!l.visible; invalidate(l.typ); renderStack(); req();
     });
+    var lpT=0,lpFired=false;
+    el.addEventListener('pointerdown',function(){
+      lpFired=false;
+      lpT=setTimeout(function(){ lpFired=true; openLayerWin(l); },450);
+    });
+    ['pointerup','pointercancel','pointerleave'].forEach(function(evn){
+      el.addEventListener(evn,function(){ clearTimeout(lpT); });
+    });
     el.addEventListener('click',function(){
+      if(lpFired){ lpFired=false; return; }
       /* Fremde Ebene antippen: Linse folgt */
       if(l.typ==='material'){ toast('Material ist Untergrund — in allen Linsen sichtbar, gesperrt'); return; }
       var target=Object.keys(LENS).find(function(k){return LENS[k].typ===l.typ;});
@@ -626,7 +673,11 @@ function renderSwatches(){
 function setColor(c,noRecent){
   color=c;
   if(!noRecent) pushRecentCol(c);
-  syncTool(); renderSwatches(); radRelayout();
+  if(lens==='studio'&&typeof selEl==='function'){
+    var s=selEl();
+    if(s&&s.e){ s.e.col=c; invalidate('layout'); }
+  }
+  syncTool(); renderSwatches(); radRelayout(); req();
 }
 function pushRecentCol(c){
   recentCols=[c].concat(recentCols.filter(function(x){return x!==c;})).slice(0,10);
@@ -643,6 +694,14 @@ function toast(m){
 var drag=null;      /* aktueller Zeichen-/Bewegungsvorgang */
 var overlaySel=null;/* Auswahl im Vektor/Studio: {layerId, idx} */
 function drawOverlays(g){
+  if(lens!=='studio') drawGuides(g);
+  /* Live-Vorschau des laufenden Pfades */
+  if(drag&&drag.kind==='path'&&drag.pts.length>1){
+    g.strokeStyle=color; g.lineWidth=VALS.vektor.v1.val; g.lineCap='round'; g.lineJoin='round';
+    g.beginPath(); g.moveTo(drag.pts[0].x,drag.pts[0].y);
+    for(var i=1;i<drag.pts.length;i++) g.lineTo(drag.pts[i].x,drag.pts[i].y);
+    g.stroke();
+  }
   /* Knoten der ausgewählten Pfad-/Layout-Objekte */
   if(!overlaySel) return;
   var l=layerById(overlaySel.layerId); if(!l||l.typ!==LENS[lens].typ) return;
@@ -688,19 +747,55 @@ function smoothPts(pts,amt){
   return out;
 }
 
+/* ══════════ STIFTKNOPF ══════════
+   Ein Klick auf die Stifttaste aktiviert den Radierer; der nächste Klick
+   schaltet auf das vorige Werkzeug zurück. Kein Halten nötig, und die
+   Taste holt nie das Rad (ausdrückliche Vorgabe).                        */
+var prevTool={draw:'brush',vektor:'pen',studio:'text'};
+var penGuard=0;
+function isPenBtn(e){
+  if(e.pointerType==='touch') return false;
+  return e.button===5||e.button===2||((e.buttons&2)!==0);
+}
+function penBtnClick(){
+  var now=Date.now();
+  if(now-penGuard<150) return;            /* derselbe Druck meldet sich mehrfach — nur einmal zählen,
+                                             aber zwei echte Klicks kurz hintereinander bleiben zwei */
+  penGuard=now;
+  if(tool()==='eraser'){
+    var back=prevTool[lens]||RING[lens][0];
+    setTool(back);
+    toast('Radierer aus \u2014 '+((TOOLDEF[back]||{}).nm||'Werkzeug'));
+  } else {
+    prevTool[lens]=tool();
+    setTool('eraser');
+    toast('Radierer aktiv (Stiftknopf) \u2014 nochmal dr\u00FCcken schaltet zur\u00FCck');
+  }
+  return true;
+}
+$('stagewrap').addEventListener('pointerdown',function(e){
+  if(isPenBtn(e)){ e.preventDefault(); penBtnClick(); }
+},true);
+$('stagewrap').addEventListener('auxclick',function(e){
+  if(e.button===2||e.button===1||e.button===5){ e.preventDefault(); penBtnClick(); }
+});
+
 stage.addEventListener('pointerdown',function(e){
   if(e.pointerType==='touch'&&e.isPrimary===false){ startPinch(e); return; }
-  var erase=(e.pointerType==='pen'&&(e.buttons&2))||e.pointerType==='eraser'; /* Stiftknopf/Radierende = Radierer */
+  if(isPenBtn(e)){ penBtnClick(); return; }        /* Klick auf die Stifttaste: nur umschalten, kein Strich */
+  var erase=e.pointerType==='eraser';              /* umgedrehtes Stiftende radiert unmittelbar */
   radOnTouch();
   try{ stage.setPointerCapture(e.pointerId); }catch(err){}
   var pt=toDoc(e.clientX,e.clientY);
   var t=erase?'eraser':tool();
   var l=activeLayer();
+  var dbl=(Date.now()-lastTap.t<380&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<26);
+  lastTap={t:Date.now(),x:e.clientX,y:e.clientY};
   if(lens==='draw'){
     if(!l){ toast('Keine Pixelebene — im Stapel anlegen'); return; }
     if(t==='pick'){ pickAt(pt); return; }
     if(t==='fill'){ fillAt(l,pt); return; }
-    drag={kind:'paint',l:l,erase:t==='eraser',last:pt,id:e.pointerId};
+    drag={kind:'paint',l:l,erase:t==='eraser',last:pt,start:pt,id:e.pointerId};
     paintDot(l,pt,pressure(e),t==='eraser');
     req();
   } else if(lens==='vektor'){
@@ -716,7 +811,7 @@ stage.addEventListener('pointerdown',function(e){
     if(t==='curve'){
       addCurvePoint(l,pt); return;
     }
-    drag={kind:'path',l:l,pts:[pt],id:e.pointerId};
+    drag={kind:'path',l:l,pts:[pt],start:pt,id:e.pointerId};
   } else if(lens==='studio'){
     if(!l){ toast('Keine Layoutebene — im Stapel anlegen'); return; }
     if(t==='pick'){ pickAt(pt); return; }
@@ -725,6 +820,7 @@ stage.addEventListener('pointerdown',function(e){
       return;
     }
     var h2=hitEl(l,pt);
+    if(h2&&dbl){ overlaySel={layerId:l.id,idx:h2.idx}; openTextWin(l,h2.idx); req(); return; }
     overlaySel=h2?{layerId:l.id,idx:h2.idx}:null;
     drag=h2?{kind:'moveEl',l:l,idx:h2.idx,start:pt,orig:cloneEl(l.data.els[h2.idx]),id:e.pointerId}:null;
     req();
@@ -735,6 +831,7 @@ stage.addEventListener('pointermove',function(e){
   radOnHover(e);
   if(!drag||e.pointerId!==drag.id) return;
   var pt=toDoc(e.clientX,e.clientY);
+  if(drag.start) pt=snapPt(pt,drag.start);
   if(drag.kind==='paint'){
     paintLine(drag.l,drag.last,pt,pressure(e),drag.erase);
     drag.last=pt; req();
@@ -757,7 +854,10 @@ function endDrag(e){
   if(drag.kind==='path'){
     var sm=smoothPts(drag.pts,VALS.vektor.v2.val);
     if(sm.length>1){
-      drag.l.data.paths.push({pts:decimate(sm,1.6),w:VALS.vektor.v1.val,col:color,closed:false});
+      var base=decimate(sm,1.6);
+      mirrorPaths(base).forEach(function(pp){
+        drag.l.data.paths.push({pts:pp,w:VALS.vektor.v1.val,col:color,closed:false});
+      });
       invalidate('pfade');
     }
   } else if(drag.kind==='mkEl'){
@@ -778,7 +878,10 @@ function endDrag(e){
 }
 stage.addEventListener('pointerup',endDrag);
 stage.addEventListener('pointercancel',endDrag);
-stage.addEventListener('contextmenu',function(e){ e.preventDefault(); }); /* Stiftknopf = Radierer, kein Menü */
+stage.addEventListener('contextmenu',function(e){
+  e.preventDefault();       /* kein Systemmenü — die Taste gehört dem Radierer */
+  penBtnClick();            /* Ersatzweg für Treiber, die nur contextmenu melden */
+});
 
 function pressure(e){ return (e.pointerType==='pen'&&e.pressure)?Math.max(0.15,e.pressure):1; }
 function cloneEl(e){ return JSON.parse(JSON.stringify(e)); }
@@ -792,8 +895,110 @@ function decimate(pts,minD){
   return out;
 }
 
+/* ══════════ LINEAL · SCHABLONE · SPIEGEL ══════════ */
+var guide={rule:'aus',ang:0,vp:null,el:null,mirror:'aus',axes:6};
+var lastTap={t:0,x:0,y:0};
+function guideCenter(){ return {x:doc.w/2,y:doc.h/2}; }
+function ensureVp(){ if(!guide.vp) guide.vp={x:doc.w/2,y:-doc.h*0.35}; return guide.vp; }
+function ensureEl(){ if(!guide.el) guide.el={cx:doc.w/2,cy:doc.h/2,rx:doc.w*0.30,ry:doc.h*0.26}; return guide.el; }
+function projDir(pt,start,ang){
+  var dx=Math.cos(ang),dy=Math.sin(ang);
+  var t=(pt.x-start.x)*dx+(pt.y-start.y)*dy;
+  return {x:start.x+dx*t,y:start.y+dy*t};
+}
+function snapPt(pt,start){
+  var r=guide.rule;
+  if(r==='aus'||!start) return pt;
+  if(r==='gerade') return projDir(pt,start,guide.ang*Math.PI/180);
+  if(r==='winkel'){
+    var a=Math.atan2(pt.y-start.y,pt.x-start.x);
+    var step=Math.PI/12;                                  /* 15° */
+    return projDir(pt,start,Math.round(a/step)*step);
+  }
+  if(r==='persp'){
+    var vp=ensureVp();
+    var a2=Math.atan2(start.y-vp.y,start.x-vp.x);
+    return projDir(pt,start,a2);
+  }
+  if(r==='ellipse'){
+    var el=ensureEl(), vx=(pt.x-el.cx)/el.rx, vy=(pt.y-el.cy)/el.ry;
+    var n=Math.hypot(vx,vy)||1;
+    return {x:el.cx+(vx/n)*el.rx, y:el.cy+(vy/n)*el.ry};
+  }
+  if(r==='kreis'){
+    var c=guideCenter(), rad=Math.hypot(start.x-c.x,start.y-c.y)||1;
+    var a3=Math.atan2(pt.y-c.y,pt.x-c.x);
+    return {x:c.x+Math.cos(a3)*rad, y:c.y+Math.sin(a3)*rad};
+  }
+  return pt;
+}
+function mirrorPts(pt){
+  var out=[pt], c=guideCenter();
+  if(guide.mirror==='x') out.push({x:doc.w-pt.x,y:pt.y});
+  else if(guide.mirror==='xy') out.push({x:doc.w-pt.x,y:pt.y},{x:pt.x,y:doc.h-pt.y},{x:doc.w-pt.x,y:doc.h-pt.y});
+  else if(guide.mirror==='radial'){
+    var n=Math.max(2,Math.min(24,guide.axes));
+    for(var i=1;i<n;i++){
+      var a=i*2*Math.PI/n, dx=pt.x-c.x, dy=pt.y-c.y;
+      out.push({x:c.x+dx*Math.cos(a)-dy*Math.sin(a), y:c.y+dx*Math.sin(a)+dy*Math.cos(a)});
+    }
+  }
+  return out;
+}
+function mirrorPaths(pts){
+  var n=mirrorPts(pts[0]).length, out=[];
+  for(var k=0;k<n;k++) out.push(pts.map(function(p){ return mirrorPts(p)[k]; }));
+  return out;
+}
+function setGuide(k,v){
+  guide[k]=v;
+  if(k==='rule'&&v==='persp') ensureVp();
+  if(k==='rule'&&v==='ellipse') ensureEl();
+  try{ localStorage.setItem('koslinse_guide',JSON.stringify(guide)); }catch(e){}
+  renderBadges(); radRelayout(); req();
+}
+function drawGuides(g){
+  var r=guide.rule, dash=[10/view.z,8/view.z];
+  g.save(); g.setLineDash(dash); g.lineWidth=1.6/view.z; g.strokeStyle='#9fb0bb88';
+  if(r==='gerade'){
+    var c=guideCenter(), a=guide.ang*Math.PI/180, L=Math.max(doc.w,doc.h);
+    var s=drag&&drag.start?drag.start:c;
+    g.beginPath(); g.moveTo(s.x-Math.cos(a)*L,s.y-Math.sin(a)*L);
+    g.lineTo(s.x+Math.cos(a)*L,s.y+Math.sin(a)*L); g.stroke();
+  } else if(r==='persp'){
+    var vp=ensureVp(), L2=Math.max(doc.w,doc.h)*2;
+    for(var i=0;i<7;i++){
+      var an=(-70+i*23)*Math.PI/180;
+      g.beginPath(); g.moveTo(vp.x,vp.y); g.lineTo(vp.x+Math.cos(an)*L2,vp.y+Math.sin(an)*L2); g.stroke();
+    }
+  } else if(r==='ellipse'){
+    var el=ensureEl();
+    g.beginPath(); g.ellipse(el.cx,el.cy,el.rx,el.ry,0,0,Math.PI*2); g.stroke();
+  } else if(r==='kreis'){
+    var cc=guideCenter();
+    g.beginPath(); g.arc(cc.x,cc.y,Math.min(doc.w,doc.h)*0.32,0,Math.PI*2); g.stroke();
+  }
+  if(guide.mirror!=='aus'){
+    var c2=guideCenter();
+    g.strokeStyle=LENS[lens].c+'99';
+    if(guide.mirror==='x'||guide.mirror==='xy'){ g.beginPath(); g.moveTo(c2.x,0); g.lineTo(c2.x,doc.h); g.stroke(); }
+    if(guide.mirror==='xy'){ g.beginPath(); g.moveTo(0,c2.y); g.lineTo(doc.w,c2.y); g.stroke(); }
+    if(guide.mirror==='radial'){
+      var n2=Math.max(2,Math.min(24,guide.axes)), R=Math.max(doc.w,doc.h);
+      for(var j=0;j<n2;j++){
+        var aa=j*2*Math.PI/n2;
+        g.beginPath(); g.moveTo(c2.x,c2.y); g.lineTo(c2.x+Math.cos(aa)*R,c2.y+Math.sin(aa)*R); g.stroke();
+      }
+    }
+  }
+  g.setLineDash([]); g.restore();
+}
+
 /* Pixel-Werkzeuge */
 function paintDot(l,pt,p,erase){
+  mirrorPts(pt).forEach(function(q){ paintDot1(l,q,p,erase); });
+}
+function paintDot1(l,pt,p,erase){
   var g=l.data.cv.getContext('2d');
   g.save();
   g.globalCompositeOperation=erase?'destination-out':'source-over';
@@ -884,8 +1089,14 @@ var rad={
 try{ var rm=localStorage.getItem('koslinse_radmode'); if(rm) rad.mode=rm; }catch(e){}
 var radEl=$('rad');
 
+var RADHINT={
+  folgend:'Ber\u00FChren zeichnet \u00B7 Rad erscheint, wo der Stift ruht',
+  fest:'Rad bleibt liegen \u00B7 Kern halten verschiebt, antippen l\u00F6st',
+  aus:'Rad aus \u00B7 Werkzeuge \u00FCber das Befehlsfeld (K)'
+};
 function setRadMode(m){
   rad.mode=m;
+  if($('hint')) $('hint').textContent=RADHINT[m]||'';
   try{ localStorage.setItem('koslinse_radmode',m); }catch(e){}
   $('rmF').classList.toggle('on',m==='folgend');
   $('rmX').classList.toggle('on',m==='fest');
@@ -1079,7 +1290,7 @@ function buildFan(){
     items=pt2.concat(rt).slice(0,3).map(function(t){ return {kind:'tip',v:t,pin:pinTips.indexOf(t)>=0}; });
     items.push({kind:'dots'});
   } else if(rad.fan==='ruler'){
-    items=[{kind:'rul',v:'Gerade'},{kind:'rul',v:'Winkel'},{kind:'rul',v:'Persp.'},{kind:'dots'}];
+    items=[{kind:'rul',v:'Gerade',r:'gerade'},{kind:'rul',v:'Winkel',r:'winkel'},{kind:'rul',v:'Persp.',r:'persp'},{kind:'dots'}];
   } else return;
   var R=150, a0=-150, step=32;
   items.forEach(function(it,i){
@@ -1100,7 +1311,13 @@ function buildFan(){
     } else if(it.kind==='rul'){
       el.textContent=it.v[0];
       el.title=it.v;
-      el.addEventListener('click',function(ev){ ev.stopPropagation(); toast('Lineal: '+it.v); rad.fan=null; setTool(lens==='vektor'?'ruler':'ruler'); radRelayout(); });
+      if(guide.rule===it.r) el.classList.add('on');
+      el.addEventListener('click',function(ev){
+        ev.stopPropagation();
+        setGuide('rule',guide.rule===it.r?'aus':it.r);
+        toast('Lineal: '+(guide.rule==='aus'?'aus':it.v));
+        rad.fan=null; radRelayout();
+      });
     } else { /* … = Fenster */
       el.classList.add('dots'); el.textContent='\u22EF'; el.title='Fenster öffnen';
       el.addEventListener('click',function(ev){ ev.stopPropagation();
@@ -1144,8 +1361,9 @@ function buildBig(){
 }
 
 /* ══════════ FENSTER ══════════ */
+var WINS=['winColor','winBrush','winRuler','uebmenu','winfile','winText','winLayer'];
 function openWin(id){
-  ['winColor','winBrush','winRuler','uebmenu','winfile'].forEach(function(w){ $(w).classList.remove('show'); });
+  WINS.forEach(function(w){ $(w).classList.remove('show'); });
   var el=$(id);
   if(id==='winColor') buildColorWin();
   if(id==='winBrush') buildBrushWin();
@@ -1155,7 +1373,7 @@ function openWin(id){
   el.classList.add('show');
   rad.fan=null; rad.big=false; radRelayout();
 }
-function closeWins(){ ['winColor','winBrush','winRuler','uebmenu','winfile'].forEach(function(w){ $(w).classList.remove('show'); }); }
+function closeWins(){ WINS.forEach(function(w){ $(w).classList.remove('show'); }); }
 function openToolWin(t){
   if(t==='pick') openWin('winColor');
   else if(t==='brush'||t==='pen') openWin('winBrush');
@@ -1243,12 +1461,32 @@ function drawTipPreview(cv){
 }
 function buildRulerWin(){
   var w=$('winRuler');
-  w.innerHTML='<button class="wx" data-close="winRuler">\u2715</button>'
-    +'<h5>LINEAL</h5><div class="frow"><button class="hbtn">Gerade</button><button class="hbtn">Winkel</button><button class="hbtn">Persp.</button></div>'
-    +'<h5>SCHABLONE</h5><div class="frow"><button class="hbtn">Ellipse</button><button class="hbtn">Kurve</button></div>'
-    +'<h5>SPIEGEL</h5><div class="frow"><button class="hbtn">Achse 1</button><button class="hbtn">Achse 2</button><button class="hbtn">Radial</button></div>';
-  w.querySelectorAll('.hbtn').forEach(function(b){
-    b.addEventListener('click',function(){ toast('Lineal: '+b.textContent+' (Platzhalter dieser Stufe)'); });
+  function grp(items,cur,key){
+    return '<div class="frow">'+items.map(function(it){
+      return '<button class="hbtn'+(cur===it[0]?' on':'')+'" data-set="'+key+'" data-v="'+it[0]+'"'
+        +(cur===it[0]?' style="border-color:var(--ac);color:var(--ac)"':'')+'>'+it[1]+'</button>';
+    }).join('')+'</div>';
+  }
+  var html='<button class="wx" data-close="winRuler">\u2715</button>'
+    +'<h5>LINEAL</h5>'
+    +grp([['aus','Aus'],['gerade','Gerade'],['winkel','Winkel'],['persp','Persp.']],guide.rule,'rule')
+    +'<h5>WINKEL DER GERADEN</h5>'
+    +grp([[0,'0\u00B0'],[15,'15\u00B0'],[30,'30\u00B0'],[45,'45\u00B0'],[90,'90\u00B0']],guide.ang,'ang')
+    +'<h5>SCHABLONE</h5>'
+    +grp([['ellipse','Ellipse'],['kreis','Kreis']],guide.rule,'rule')
+    +'<h5>SPIEGEL</h5>'
+    +grp([['aus','Aus'],['x','Achse 1'],['xy','Achse 2'],['radial','Radial']],guide.mirror,'mirror')
+    +'<h5>RADIALACHSEN</h5>'
+    +grp([[4,'4'],[6,'6'],[8,'8'],[12,'12']],guide.axes,'axes')
+    +'<div class="mono" style="font-size:11px;color:var(--tx3);margin-top:9px">Wirkt in Pixel und Pfaden. Gespiegelte Striche entstehen mit.</div>';
+  w.innerHTML=html;
+  w.querySelectorAll('[data-set]').forEach(function(b){
+    b.addEventListener('click',function(){
+      var k=b.dataset.set, v=b.dataset.v;
+      setGuide(k,(k==='ang'||k==='axes')?Number(v):v);
+      buildRulerWin();
+      toast(k==='mirror'?('Spiegel: '+b.textContent):('Lineal: '+b.textContent));
+    });
   });
   wireClose(w);
 }
@@ -1412,6 +1650,114 @@ function openUeb(){
   openWin('uebmenu');
 }
 
+/* ══════════ TEXT IM LAYOUT BEARBEITEN ══════════ */
+function selEl(){
+  if(!overlaySel) return null;
+  var l=layerById(overlaySel.layerId);
+  if(!l||l.typ!=='layout') return null;
+  return {l:l,e:l.data.els[overlaySel.idx],idx:overlaySel.idx};
+}
+function openTextWin(l,idx){
+  var e=l.data.els[idx];
+  if(!e) return;
+  overlaySel={layerId:l.id,idx:idx};
+  var w=$('winText');
+  var isText=e.kind==='text';
+  w.innerHTML='<button class="wx" data-close="winText">\u2715</button>'
+    +'<h5>'+(isText?'TEXT':e.kind.toUpperCase())+' BEARBEITEN</h5>'
+    +(isText?'<div class="hexrow"><input id="txIn" value="'+String(e.text).replace(/"/g,'&quot;')+'"><button id="txOk">OK</button></div>':'')
+    +'<div class="frow"><button class="hbtn" id="txCol">Farbe anwenden</button><button class="hbtn" id="txDel">L\u00F6schen</button></div>'
+    +'<div class="frow"><button class="hbtn" id="txUp">Nach vorn</button><button class="hbtn" id="txDown">Nach hinten</button></div>'
+    +'<div class="mono" style="font-size:11px;color:var(--tx3);margin-top:8px">'
+    +(isText?'Schrift und Laufweite wirken \u00FCber die Regler im Rad und im Panel.':'Gr\u00F6\u00DFe durch Ziehen an der Fl\u00E4che.')+'</div>';
+  openWin('winText');
+  if(isText){
+    var inp=$('txIn');
+    var apply=function(){ e.text=inp.value; invalidate('layout'); autosaveSoon(); req(); };
+    $('txOk').addEventListener('click',function(){ apply(); closeWins(); });
+    inp.addEventListener('input',apply);
+    inp.addEventListener('keydown',function(ev){ if(ev.key==='Enter'){ apply(); closeWins(); } });
+    setTimeout(function(){ try{ inp.focus(); inp.select(); }catch(err){} },30);
+  }
+  $('txCol').addEventListener('click',function(){ e.col=color; invalidate('layout'); autosaveSoon(); req(); toast('Farbe angewendet'); });
+  $('txDel').addEventListener('click',function(){
+    l.data.els.splice(idx,1); overlaySel=null; invalidate('layout'); closeWins(); autosaveSoon(); req(); toast('Element gel\u00F6scht');
+  });
+  $('txUp').addEventListener('click',function(){
+    if(idx>=l.data.els.length-1) return;
+    var m=l.data.els.splice(idx,1)[0]; l.data.els.splice(idx+1,0,m);
+    overlaySel={layerId:l.id,idx:idx+1}; invalidate('layout'); autosaveSoon(); req(); closeWins();
+  });
+  $('txDown').addEventListener('click',function(){
+    if(idx<=0) return;
+    var m2=l.data.els.splice(idx,1)[0]; l.data.els.splice(idx-1,0,m2);
+    overlaySel={layerId:l.id,idx:idx-1}; invalidate('layout'); autosaveSoon(); req(); closeWins();
+  });
+  wireClose(w);
+}
+/* Studio-Regler wirken auf das ausgewählte Textelement */
+var _setVal=setVal;
+setVal=function(key,v){
+  _setVal(key,v);
+  if(lens!=='studio') return;
+  var s=selEl();
+  if(s&&s.e&&s.e.kind==='text'){
+    if(key==='v1'){ s.e.size=VALS.studio.v1.val; s.e.h=Math.max(s.e.h,s.e.size*1.1); }
+    else s.e.track=VALS.studio.v2.val;
+    invalidate('layout'); req();
+  }
+};
+
+/* ══════════ EBENENMENÜ (Langdruck im Stapel) ══════════ */
+function openLayerWin(l){
+  var w=$('winLayer'), i=doc.stack.indexOf(l);
+  w.innerHTML='<button class="wx" data-close="winLayer">\u2715</button>'
+    +'<h5>'+l.name+' \u00B7 '+TYPNM[l.typ]+'</h5>'
+    +'<div class="sl"><div class="r1"><span>Deckkraft</span><span class="v" id="lyOpV">'+Math.round(l.opacity*100)+' %</span></div>'
+    +'<input type="range" id="lyOp" min="0" max="100" value="'+Math.round(l.opacity*100)+'"></div>'
+    +'<div class="hexrow"><input id="lyNm" value="'+l.name.replace(/"/g,'&quot;')+'"><button id="lyNmOk">Name</button></div>'
+    +'<div class="frow"><button class="hbtn" id="lyUp">\u2191 h\u00F6her</button><button class="hbtn" id="lyDn">\u2193 tiefer</button></div>'
+    +'<div class="frow"><button class="hbtn" id="lyVis">'+(l.visible?'Ausblenden':'Einblenden')+'</button>'
+    +'<button class="hbtn" id="lyDup">Duplizieren</button></div>'
+    +'<div class="frow">'+(l.vorlage?'<button class="hbtn" id="lyVor">Vorlage aufheben</button>':'')
+    +(l.typ==='material'?'':'<button class="hbtn" id="lyDel">L\u00F6schen</button>')+'</div>';
+  openWin('winLayer');
+  $('lyOp').addEventListener('input',function(){
+    l.opacity=Number(this.value)/100; $('lyOpV').textContent=this.value+' %';
+    invalidate(l.typ); renderStack(); req();
+  });
+  $('lyOp').addEventListener('change',autosaveSoon);
+  $('lyNmOk').addEventListener('click',function(){
+    l.name=$('lyNm').value||l.name; renderStack(); autosaveSoon(); closeWins();
+  });
+  $('lyUp').addEventListener('click',function(){
+    if(i>=doc.stack.length-1) return;
+    doc.stack.splice(i,1); doc.stack.splice(i+1,0,l);
+    invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins();
+  });
+  $('lyDn').addEventListener('click',function(){
+    if(i<=0) return;
+    doc.stack.splice(i,1); doc.stack.splice(i-1,0,l);
+    invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins();
+  });
+  $('lyVis').addEventListener('click',function(){
+    l.visible=!l.visible; invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins();
+  });
+  $('lyDup').addEventListener('click',function(){
+    activeByLens[lens]=l.id; closeWins(); dupLayer();
+  });
+  if($('lyVor')) $('lyVor').addEventListener('click',function(){
+    l.vorlage=false; l.locked=l.typ==='material'; l.name=l.name.replace(' (Vorlage)','');
+    invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins(); toast('Vorlage aufgehoben');
+  });
+  if($('lyDel')) $('lyDel').addEventListener('click',function(){
+    doc.stack.splice(i,1);
+    if(activeByLens[lens]===l.id) activeByLens[lens]=null;
+    overlaySel=null; invalidate(l.typ); renderStack(); autosaveSoon(); req(); closeWins(); toast('Ebene gel\u00F6scht');
+  });
+  wireClose(w);
+}
+
 /* ══════════ BEFEHLSFELD ══════════ */
 function commands(){
   var c=[];
@@ -1424,6 +1770,11 @@ function commands(){
   c.push({t:'Neue Ebene',k:'Stapel',fn:addLayerCmd});
   c.push({t:'Ansicht einpassen',k:'Ansicht',fn:function(){fitView();req();}});
   c.push({t:'Datei speichern (.kos)',k:'Datei',fn:saveKos});
+  c.push({t:'In die Ablage legen (Dropbox)',k:'Ablage',fn:dbxSaveKos});
+  c.push({t:'Aus der Ablage \u00F6ffnen (Dropbox)',k:'Ablage',fn:function(){ closeWins(); $('winfile').classList.add('show'); dbxListKos(); }});
+  c.push({t:'Ebene l\u00F6schen \u00B7 umbenennen \u00B7 Deckkraft',k:'Stapel',fn:function(){ var l=activeLayer(); if(l) openLayerWin(l); }});
+  c.push({t:'Lineal \u00B7 Schablone \u00B7 Spiegel',k:'Hilfslinien',fn:function(){ openWin('winRuler'); }});
+  c.push({t:'Lineal aus',k:'Hilfslinien',fn:function(){ setGuide('rule','aus'); setGuide('mirror','aus'); toast('Hilfslinien aus'); }});
   Object.keys(LENS).forEach(function(k){ c.push({t:'Linse: '+LENS[k].nm,k:LENS[k].sicht,fn:function(){setLens(k);}}); });
   return c;
 }
@@ -1625,6 +1976,125 @@ function u8b64(u8){
   return btoa(s);
 }
 
+/* ══════════ ABLAGE · DROPBOX (Sitzung von K-OS Files, gleiche Origin) ══════════
+   Kein zweiter Login: liest kosfiles_tokens/kosfiles_appkey und erneuert den
+   Zugriff bei Bedarf selbst. Container landen in /Linse im App-Ordner.        */
+var DBX_DIR='/Linse';
+function dbxTokens(){
+  try{ return JSON.parse(localStorage.getItem('kosfiles_tokens')||'null'); }catch(e){ return null; }
+}
+function dbxConnected(){ var t=dbxTokens(); return !!(t&&(t.access||t.refresh)); }
+function dbxRefresh(){
+  var t=dbxTokens(), key=localStorage.getItem('kosfiles_appkey')||'';
+  if(!t||!t.refresh||!key) return Promise.reject(new Error('Sitzung abgelaufen — in K-OS Files neu verbinden'));
+  return fetch('https://api.dropboxapi.com/oauth2/token',{
+    method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({grant_type:'refresh_token',refresh_token:t.refresh,client_id:key})
+  }).then(function(r){
+    if(!r.ok) throw new Error('Token-Refresh fehlgeschlagen ('+r.status+')');
+    return r.json();
+  }).then(function(j){
+    var nt={access:j.access_token,refresh:t.refresh,exp:Date.now()+Math.max(60,(j.expires_in||14400)-60)*1000};
+    try{ localStorage.setItem('kosfiles_tokens',JSON.stringify(nt)); }catch(e){}
+    return nt.access;
+  });
+}
+function dbxToken(){
+  var t=dbxTokens();
+  if(!t) return Promise.reject(new Error('Nicht verbunden — in K-OS Files mit Dropbox anmelden'));
+  if(!t.access||(t.exp&&Date.now()>t.exp)) return dbxRefresh();
+  return Promise.resolve(t.access);
+}
+function dbxRPC(ep,body){
+  return dbxToken().then(function(at){
+    return fetch('https://api.dropboxapi.com/2/'+ep,{
+      method:'POST',headers:{'Authorization':'Bearer '+at,'Content-Type':'application/json'},
+      body:JSON.stringify(body===undefined?null:body)
+    });
+  }).then(function(r){
+    if(r.status===401) return dbxRefresh().then(function(){ return dbxRPC(ep,body); });
+    if(!r.ok) return r.text().then(function(t){ throw new Error(ep+' \u2192 '+r.status+' '+t.slice(0,120)); });
+    return r.json();
+  });
+}
+function dbxSaveKos(){
+  var u8;
+  try{ u8=buildContainer(); }catch(err){ toast('Container fehlgeschlagen: '+(err.message||err)); return Promise.reject(err); }
+  var path=DBX_DIR+'/'+doc.name+'.kos';
+  $('dbxState').textContent='Lade hoch \u2026';
+  return dbxToken().then(function(at){
+    return fetch('https://content.dropboxapi.com/2/files/upload',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+at,
+        'Dropbox-API-Arg':JSON.stringify({path:path,mode:'overwrite',mute:true}),
+        'Content-Type':'application/octet-stream'},
+      body:u8
+    });
+  }).then(function(r){
+    if(!r.ok) return r.text().then(function(t){ throw new Error(r.status+' '+t.slice(0,120)); });
+    return r.json();
+  }).then(function(j){
+    $('dbxState').textContent='In der Ablage: '+path+' \u00B7 '+Math.round((j.size||u8.length)/1024)+' kB';
+    toast('In die Ablage gelegt: '+doc.name+'.kos');
+  }).catch(function(err){
+    $('dbxState').textContent='Fehler: '+(err.message||err);
+    toast('Ablage: '+(err.message||err));
+  });
+}
+function dbxListKos(){
+  $('dbxState').textContent='Ablage wird gelesen \u2026';
+  $('dbxFiles').innerHTML='';
+  return dbxRPC('files/list_folder',{path:DBX_DIR,recursive:false,limit:200})
+    .catch(function(err){
+      if(/not_found/.test(String(err))) return {entries:[]};
+      throw err;
+    })
+    .then(function(res){
+      var ent=(res.entries||[]).filter(function(e){ return e['.tag']==='file'&&/\.kos$/i.test(e.name); })
+        .sort(function(a,b){ return (b.server_modified||'').localeCompare(a.server_modified||''); });
+      if(!ent.length){ $('dbxState').textContent='Noch keine .kos-Container in '+DBX_DIR; return; }
+      $('dbxState').textContent=ent.length+' Container in '+DBX_DIR;
+      $('dbxFiles').innerHTML=ent.map(function(e){
+        return '<div class="ui" data-p="'+e.path_lower+'" style="display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:9px;cursor:pointer">'
+          +'<span class="t" style="font-size:12.5px">'+e.name+'</span>'
+          +'<span class="d" style="font-size:11px;color:var(--tx3)">'+Math.round(e.size/1024)+' kB \u00B7 '+String(e.server_modified||'').slice(0,10)+'</span></div>';
+      }).join('');
+      $('dbxFiles').querySelectorAll('[data-p]').forEach(function(el){
+        el.addEventListener('click',function(){ dbxOpenKos(el.dataset.p); });
+      });
+    })
+    .catch(function(err){
+      $('dbxState').textContent='Fehler: '+(err.message||err);
+      toast('Ablage: '+(err.message||err));
+    });
+}
+function dbxOpenKos(path){
+  $('dbxState').textContent='Lade '+path+' \u2026';
+  return dbxToken().then(function(at){
+    return fetch('https://content.dropboxapi.com/2/files/download',{
+      method:'POST',headers:{'Authorization':'Bearer '+at,'Dropbox-API-Arg':JSON.stringify({path:path})}
+    });
+  }).then(function(r){
+    if(!r.ok) throw new Error('download '+r.status);
+    return r.arrayBuffer();
+  }).then(function(buf){
+    loadKosBytes(new Uint8Array(buf),function(){
+      afterDocLoad(); closeWins();
+      toast('Aus der Ablage geladen: '+doc.name);
+    });
+  }).catch(function(err){
+    $('dbxState').textContent='Fehler: '+(err.message||err);
+    toast('Ablage: '+(err.message||err));
+  });
+}
+function dbxState(){
+  var el=$('dbxState');
+  if(!el) return;
+  el.textContent=dbxConnected()
+    ? 'Dropbox verbunden \u00B7 Ordner '+DBX_DIR
+    : 'Nicht verbunden \u2014 in K-OS Files (Taste 4) mit Dropbox anmelden';
+}
+
 /* ══════════ AUTOSAVE (IndexedDB) ══════════ */
 var asT=0;
 function autosaveSoon(){ clearTimeout(asT); asT=setTimeout(autosave,1500); }
@@ -1666,10 +2136,13 @@ $('uebBtn').addEventListener('click',function(){
   if($('uebmenu').classList.contains('show')) closeWins(); else openUeb();
 });
 $('fileBtn').addEventListener('click',function(){
-  if($('winfile').classList.contains('show')) closeWins(); else { closeWins(); $('winfile').classList.add('show'); }
+  if($('winfile').classList.contains('show')) closeWins();
+  else { closeWins(); $('winfile').classList.add('show'); dbxState(); }
 });
 wireClose($('winfile'));
 $('kosSave').addEventListener('click',function(){ closeWins(); saveKos(); });
+$('dbxSave').addEventListener('click',function(){ dbxSaveKos(); });
+$('dbxList').addEventListener('click',function(){ dbxListKos(); });
 $('kosLoad').addEventListener('click',function(){ $('kosFile').click(); });
 $('kosFile').addEventListener('change',function(){
   var f=this.files[0]; this.value='';
@@ -1749,6 +2222,10 @@ function afterDocLoad(){
 function boot(){
   sctx=stage.getContext('2d');
   try{ var db=localStorage.getItem('koslinse_db'); if(db!==null) durchblick=Number(db); }catch(e){}
+  try{
+    var gj=JSON.parse(localStorage.getItem('koslinse_guide')||'null');
+    if(gj){ ['rule','ang','mirror','axes'].forEach(function(k){ if(k in gj) guide[k]=gj[k]; }); }
+  }catch(e){}
   $('dbSl').value=durchblick; $('dbVal').textContent=durchblick+' %';
   tryRestore(function(ok){
     if(!ok) demoDoc();
@@ -1773,7 +2250,13 @@ window.KOSL={
   rad:rad, setRadMode:setRadMode, commands:commands,
   setTool:setTool, tool:tool, mkLayer:mkLayer, pixelLayer:pixelLayer,
   get seeThrough(){return seeThrough;}, get drag(){return drag;},
-  get color(){return color;}, get pinCols(){return pinCols;}, get pinTips(){return pinTips;}
+  get color(){return color;}, get pinCols(){return pinCols;}, get pinTips(){return pinTips;},
+  penBtnClick:penBtnClick, isPenBtn:isPenBtn, prevTool:prevTool,
+  guide:guide, setGuide:setGuide, snapPt:snapPt, mirrorPts:mirrorPts, mirrorPaths:mirrorPaths,
+  openTextWin:openTextWin, openLayerWin:openLayerWin, selEl:selEl,
+  get overlaySel(){return overlaySel;}, set overlaySel(v){overlaySel=v;},
+  dbxConnected:dbxConnected, dbxSaveKos:dbxSaveKos, dbxListKos:dbxListKos, dbxOpenKos:dbxOpenKos,
+  layerById:layerById, dupLayer:dupLayer, setColor:setColor, setVal:function(k,v){setVal(k,v);}
 };
 </script>
 </body>
