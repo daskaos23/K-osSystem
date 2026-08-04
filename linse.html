@@ -215,6 +215,22 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
 #pickDot{position:absolute;width:34px;height:34px;border-radius:50%;border:3px solid #fff;
   box-shadow:0 2px 12px rgba(0,0,0,.7);transform:translate(-50%,-150%);pointer-events:none;
   z-index:78;display:none}
+/* Ringbelegung */
+#winRing{width:290px}
+.ringmap{position:relative;height:210px;margin:6px 0 10px}
+.ringmap .mid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:40px;height:40px;
+  border-radius:50%;background:var(--ac);opacity:.35}
+.rslot{position:absolute;transform:translate(-50%,-50%);width:52px;height:52px;border-radius:50%;
+  background:#11181d;border:1.5px solid var(--line2);color:var(--tx);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:1px;cursor:pointer;font-size:15px;padding:2px}
+.rslot.sel{border-color:var(--ac);color:var(--ac)}
+.rslot .sn{font:7.5px 'JetBrains Mono',monospace;color:var(--tx3);letter-spacing:.04em;white-space:nowrap}
+.rslot.allsl{border-style:dashed;color:var(--tx3);font:9px 'JetBrains Mono',monospace;cursor:default}
+.rpick{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.rpick .rt{aspect-ratio:1;border:1px solid var(--line);background:#11181d;border-radius:8px;color:var(--tx);
+  display:flex;align-items:center;justify-content:center;font-size:15px;cursor:pointer}
+.rpick .rt.on{border-color:var(--ac);color:var(--ac)}
+.rpick .rt.used{box-shadow:inset 0 0 0 1px #3d5969}
 /* Stift-Diagnose */
 #diagBox{position:absolute;left:10px;top:10px;max-width:420px;background:#0d1114ee;border:1px solid var(--line2);
   border-radius:9px;padding:8px 10px;font:10.5px 'JetBrains Mono',monospace;color:var(--tx2);
@@ -282,6 +298,7 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
     <div class="win" id="uebmenu"></div>
     <div class="win" id="winText"></div>
     <div class="win" id="winLayer"></div>
+    <div class="win" id="winRing"></div>
     <div class="win" id="winfile">
       <button class="wx" data-close="winfile">&#10005;</button>
       <h5>Datei &#183; .kos-Container</h5>
@@ -674,12 +691,39 @@ function elAct(k){
   else if(k==='del'){ l.data.els.splice(i,1); overlaySel=null; toast('Element gel\u00F6scht'); }
   invalidate('layout'); autosaveSoon(); req();
 }
-/* Ring: 5 Werkzeuge (oben, rechts-oben, rechts-unten, links-unten, links-oben) + Alle unten */
-var RING={
+/* ══════════ RINGBELEGUNG ══════════
+   Fünf Plätze je Linse; der untere Sektor ist überall „Alle".
+   Reihenfolge: oben · rechts oben · rechts unten · links unten · links oben.
+   Die Vorgabe stammt aus dem Entwurf, die eigene Wahl liegt darüber und
+   wird je Linse getrennt gespeichert.                                    */
+var RING_DEFAULT={
   draw:  ['brush','pick','ruler','selRect','eraser'],
   vektor:['pen','pick','sel','curve','eraser'],
   studio:['text','pick','align','frame','sel']
 };
+var RING_SLOTS=['Oben','Rechts oben','Rechts unten','Links unten','Links oben'];
+var RING=JSON.parse(JSON.stringify(RING_DEFAULT));
+function loadRing(){
+  try{
+    var j=JSON.parse(localStorage.getItem('koslinse_ring')||'null');
+    if(j) Object.keys(RING).forEach(function(k){
+      if(Array.isArray(j[k])&&j[k].length===5) RING[k]=j[k].slice();
+    });
+  }catch(e){}
+}
+function saveRing(){ try{ localStorage.setItem('koslinse_ring',JSON.stringify(RING)); }catch(e){} }
+function setRingSlot(k,i,toolId){
+  if(!RING[k]||i<0||i>4||!TOOLDEF[toolId]) return false;
+  var was=RING[k].indexOf(toolId);
+  if(was>=0&&was!==i){ RING[k][was]=RING[k][i]; }   /* Platz tauschen statt doppelt belegen */
+  RING[k][i]=toolId;
+  saveRing(); radRelayout();
+  return true;
+}
+function resetRing(k){
+  RING[k]=RING_DEFAULT[k].slice();
+  saveRing(); radRelayout();
+}
 /* Großer Ring: alle Werkzeuge der Linse, nach Gruppen — Pixel 18 · Pfade 18 · Layout 15 */
 var ALLTOOLS={
   draw:[['Malen',['brush','eraser','fill','grad','pick']],
@@ -1762,6 +1806,16 @@ function radRelayout(){
   all.style.left='0px'; all.style.top=R+'px';
   all.textContent=rad.big?'Zu':'Alle';
   tapBind(all,function(){ rad.big=!rad.big; rad.fan=null; radRelayout(); });
+  (function(){                       /* „Alle" lange drücken: Belegung ändern */
+    var t=0;
+    all.addEventListener('pointerdown',function(){
+      clearTimeout(t);
+      t=setTimeout(function(){ ringSel=0; openWin('winRing'); toast('Ringbelegung \u2014 Platz und Werkzeug w\u00E4hlen'); },600);
+    });
+    ['pointerup','pointercancel','pointerleave'].forEach(function(e){
+      all.addEventListener(e,function(){ clearTimeout(t); });
+    });
+  })();
   radEl.appendChild(all);
   /* Regler links/rechts in der Lücke */
   radEl.appendChild(mkSlider('v1',-R*0.52,0));
@@ -1778,6 +1832,22 @@ function mkSat(t,x,y,size){
   if(size){ el.style.width=size+'px'; el.style.height=size+'px'; el.style.fontSize=Math.max(11,size*0.36)+'px'; }
   if(isCol){ el.style.background=color; el.style.borderColor='#0a0a0a55'; el.innerHTML='<span class="bnd" style="--c:'+color+'"></span>'; el.title='Farbe'; }
   else { el.textContent=(TOOLDEF[t]||{}).g; el.title=(TOOLDEF[t]||{}).nm; }
+  (function(){                       /* Werkzeug im Ring lange drücken: diesen Platz neu belegen */
+    var ht=0;
+    el.addEventListener('pointerdown',function(){
+      clearTimeout(ht);
+      if(rad.big) return;
+      ht=setTimeout(function(){
+        var i=RING[lens].indexOf(t);
+        if(i<0) return;
+        ringSel=i; openWin('winRing');
+        toast('Platz \u201E'+RING_SLOTS[i]+'\u201C \u2014 Werkzeug w\u00E4hlen');
+      },600);
+    });
+    ['pointerup','pointercancel','pointerleave'].forEach(function(e){
+      el.addEventListener(e,function(){ clearTimeout(ht); });
+    });
+  })();
   tapBind(el,function(){
     var now=Date.now();
     var dbl=(now-rad.lastTap.t<420&&rad.lastTap.id===t);
@@ -1987,9 +2057,9 @@ function buildBig(){
    FENSTER — frei beweglich, skalierbar, feststellbar, rollbar.
    Lage, Größe und Feststellung bleiben je Fenster gespeichert.
    ══════════════════════════════════════════════════════════════════ */
-var WINS=['winColor','winBrush','winRuler','uebmenu','winfile','winText','winLayer'];
+var WINS=['winColor','winBrush','winRuler','uebmenu','winfile','winText','winLayer','winRing'];
 var WINTITLE={winColor:'FARBE',winBrush:'PINSEL',winRuler:'HILFSLINIEN',uebmenu:'\u00DCBERGABE',
-              winfile:'DATEI',winText:'ELEMENT',winLayer:'EBENE'};
+              winfile:'DATEI',winText:'ELEMENT',winLayer:'EBENE',winRing:'RINGBELEGUNG'};
 var winGeo={};
 try{ winGeo=JSON.parse(localStorage.getItem('koslinse_wins')||'{}')||{}; }catch(e){ winGeo={}; }
 function saveWinGeo(){ try{ localStorage.setItem('koslinse_wins',JSON.stringify(winGeo)); }catch(e){} }
@@ -2111,6 +2181,7 @@ function openWin(id){
   if(id==='winColor') buildColorWin();
   else if(id==='winBrush') buildBrushWin();
   else if(id==='winRuler') buildRulerWin();
+  else if(id==='winRing') buildRingWin();
   else if(!el.querySelector('.winbar')) dressWin(id);
   el.classList.add('show');
   applyWinGeo(id);
@@ -2205,6 +2276,59 @@ function buildRulerWin(){
   });
   wireClose(w);
   dressWin('winRuler');
+}
+/* ══════════ RINGBELEGUNG ÄNDERN ══════════
+   Platz antippen, dann Werkzeug wählen. Bereits belegte Werkzeuge
+   tauschen den Platz, statt doppelt zu erscheinen.                 */
+var ringSel=0;
+function buildRingWin(){
+  var w=$('winRing'), k=lens;
+  var alle=[];
+  ALLTOOLS[k].forEach(function(g){ g[1].forEach(function(t){ if(alle.indexOf(t)<0) alle.push(t); }); });
+  RING[k].forEach(function(t){ if(alle.indexOf(t)<0) alle.push(t); });
+  var angs=[-90,-30,30,150,210], R=72;
+  var html='<h5>RINGBELEGUNG \u00B7 '+LENS[k].nm+'</h5>'
+    +'<div class="ringmap"><div class="mid"></div>';
+  RING[k].forEach(function(t,i){
+    var a=angs[i]*Math.PI/180;
+    var d=TOOLDEF[t]||{};
+    html+='<div class="rslot'+(ringSel===i?' sel':'')+'" data-slot="'+i+'"'
+      +' style="left:'+(50+Math.cos(a)*R/2.1)+'%;top:'+(50+Math.sin(a)*R/1.5)+'%">'
+      +'<span>'+(d.g||'?')+'</span><span class="sn">'+RING_SLOTS[i]+'</span></div>';
+  });
+  html+='<div class="rslot allsl" style="left:50%;top:'+(50+R/1.5)+'%">Alle</div></div>'
+    +'<h5>WERKZEUG F\u00DCR \u201E'+RING_SLOTS[ringSel].toUpperCase()+'\u201C</h5>'
+    +'<div class="rpick">'
+    +alle.map(function(t){
+      var d=TOOLDEF[t]||{}, used=RING[k].indexOf(t);
+      return '<div class="rt'+(RING[k][ringSel]===t?' on':'')+(used>=0&&used!==ringSel?' used':'')
+        +'" data-tool="'+t+'" title="'+(d.nm||t)+(used>=0&&used!==ringSel?' \u2014 liegt auf \u201E'+RING_SLOTS[used]+'\u201C, wird getauscht':'')+'">'+(d.g||'?')+'</div>';
+    }).join('')
+    +'</div>'
+    +'<div class="mono" style="font-size:11px;color:var(--tx3);margin-top:8px">'
+    +'Der untere Sektor ist in jeder Linse <b>Alle</b> \u2014 diese Richtung bleibt fest. '
+    +'Jede Linse hat ihre eigene Belegung.</div>'
+    +'<div class="frow"><button class="hbtn" id="ringReset">Vorgabe wiederherstellen</button></div>';
+  w.innerHTML=html;
+  w.querySelectorAll('[data-slot]').forEach(function(el){
+    el.addEventListener('click',function(){ ringSel=Number(el.dataset.slot); buildRingWin(); });
+  });
+  w.querySelectorAll('[data-tool]').forEach(function(el){
+    el.addEventListener('click',function(){
+      var t=el.dataset.tool;
+      var was=RING[k].indexOf(t);
+      setRingSlot(k,ringSel,t);
+      buildRingWin();
+      toast(was>=0&&was!==ringSel
+        ? 'Pl\u00E4tze getauscht: '+RING_SLOTS[ringSel]+' \u2194 '+RING_SLOTS[was]
+        : (TOOLDEF[t].nm+' liegt jetzt auf \u201E'+RING_SLOTS[ringSel]+'\u201C'));
+    });
+  });
+  $('ringReset').addEventListener('click',function(){
+    resetRing(k); buildRingWin(); toast('Vorgabe wiederhergestellt');
+  });
+  dressWin('winRing');
+  applyWinGeo('winRing');
 }
 function wireClose(w){
   var x=w.querySelector('.wx');
@@ -3568,6 +3692,8 @@ function commands(){
   c.push({t:'Ebene l\u00F6schen \u00B7 umbenennen \u00B7 Deckkraft',k:'Stapel',fn:function(){ var l=activeLayer(); if(l) openLayerWin(l); }});
   c.push({t:'Lineal \u00B7 Schablone \u00B7 Spiegel',k:'Hilfslinien',fn:function(){ openWin('winRuler'); }});
   c.push({t:'Pinsel \u00B7 Spitzen \u00B7 Bibliothek',k:'Pinsel',fn:function(){ openWin('winBrush'); }});
+  c.push({t:'Ringbelegung \u00E4ndern',k:'Werkzeugrad',fn:function(){ ringSel=0; openWin('winRing'); }});
+  c.push({t:'Ringbelegung zur\u00FCcksetzen',k:'Werkzeugrad',fn:function(){ resetRing(lens); toast('Vorgabe wiederhergestellt'); }});
   brushList(curWhich()).forEach(function(b){
     c.push({t:'Spitze: '+b.name,k:(b.cat||'Pinsel'),fn:function(){ setBrush(b.id); }});
   });
@@ -4062,6 +4188,7 @@ function boot(){
   sctx=stage.getContext('2d');
   loadFarben();
   if(typeof loadBrushes==='function') loadBrushes();
+  if(typeof loadRing==='function') loadRing();
   try{ var db=localStorage.getItem('koslinse_db'); if(db!==null) durchblick=Number(db); }catch(e){}
   try{
     var gj=JSON.parse(localStorage.getItem('koslinse_guide')||'null');
@@ -4117,7 +4244,10 @@ window.KOSL={
   doUndo:doUndo, doRedo:doRedo, snapLayer:snapLayer, snapStack:snapStack, preSnap:preSnap,
   get undoStack(){return undoStack;}, get redoStack(){return redoStack;},
   fxDab:fxDab, fxRun:fxRun, fxStart:fxStart, get fxPot(){return fxPot;},
-  dressWin:dressWin, applyWinGeo:applyWinGeo, get winGeo(){return winGeo;}, isPinned:isPinned
+  dressWin:dressWin, applyWinGeo:applyWinGeo, get winGeo(){return winGeo;}, isPinned:isPinned,
+  RING_DEFAULT:RING_DEFAULT, RING_SLOTS:RING_SLOTS, setRingSlot:setRingSlot, resetRing:resetRing,
+  loadRing:loadRing, saveRing:saveRing, buildRingWin:buildRingWin, get ringSel(){return ringSel;},
+  set ringSel(v){ringSel=v;}
 };
 </script>
 </body>
