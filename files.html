@@ -403,6 +403,31 @@
     justify-content: space-between;
     cursor: pointer;
   }
+  #kos-neu { position:fixed; inset:0; background:rgba(6,8,10,.72); display:flex;
+    align-items:center; justify-content:center; z-index:400; padding:18px; }
+  .kn-card { width:min(420px,100%); max-height:86vh; overflow-y:auto; background:#141b21;
+    border:1px solid #333c45; border-radius:16px; padding:16px; box-shadow:0 24px 60px -18px rgba(0,0,0,.9); }
+  .kn-h { font-size:16px; font-weight:700; color:#eef3f6; margin-bottom:2px; }
+  .kn-sub { font:11px 'JetBrains Mono',monospace; letter-spacing:.1em; color:#66707a; margin-bottom:12px; }
+  .kn-in { width:100%; height:40px; border-radius:10px; border:1px solid #232a30; background:#10151a;
+    color:#eef3f6; padding:0 12px; font-size:14px; outline:none; margin-bottom:12px; }
+  .kn-in:focus { border-color:#3d5969; }
+  .kn-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:7px; margin-bottom:14px; }
+  .kn-f { display:flex; flex-direction:column; gap:2px; align-items:flex-start; padding:9px 11px;
+    border-radius:10px; border:1px solid #232a30; background:#10151a; color:#eef3f6; cursor:pointer; text-align:left; }
+  .kn-f b { font-size:13px; font-weight:600; }
+  .kn-f span { font:10px 'JetBrains Mono',monospace; color:#66707a; }
+  .kn-f.on { border-color:#26b9d9; color:#26b9d9; }
+  .kn-f.on span { color:#26b9d9; }
+  .kn-opt { display:flex; flex-direction:column; gap:3px; padding:12px 13px; border-radius:11px;
+    border:1px solid #232a30; background:#10151a; cursor:pointer; margin-bottom:8px; }
+  .kn-opt:hover { border-color:#3d5969; }
+  .kn-opt b { font-size:14px; color:#eef3f6; font-weight:600; }
+  .kn-opt span { font-size:11.5px; color:#66707a; }
+  .kn-row { display:flex; gap:8px; }
+  .kn-btn { flex:1; height:42px; border-radius:11px; border:1px solid #232a30; background:#10151a;
+    color:#eef3f6; font-size:14px; cursor:pointer; }
+  .kn-btn.prim { background:#26b9d9; border-color:#26b9d9; color:#08131a; font-weight:700; }
   #lightbox {
     position: fixed;
     inset: 0;
@@ -2619,9 +2644,13 @@ function renderProject(p) {
   $('folder-list').querySelectorAll('.file-item').forEach(el => {
     el.onclick = () => {
       if (suppressClick) { suppressClick = false; return; }
-      const w = findWork(p, el.dataset.file);
+      const nm = el.dataset.file, ex = extOf(nm);
+      const pth = filePath(p, el.dataset.folder, nm);
+      if (ex === 'kos') { kosOpenContainer(pth, nm.replace(/\.kos$/i, '')); return; }
+      if (thumbable(ex) && pth) { kosBildDialog(pth, nm); return; }
+      const w = findWork(p, nm);
       if (w) openWork(w);
-      else openSingle(p, el.dataset.folder, el.dataset.file);
+      else openSingle(p, el.dataset.folder, nm);
     };
     attachLongPress(el, () => openFileSheet(p, el.dataset.folder, el.dataset.file));
   });
@@ -2891,6 +2920,7 @@ function openFileSheet(p, folder, name) {
   const isOff = path && offlineSet.has(path);
   const canImg = thumbable(extOf(name));
   $('file-actions').innerHTML = `
+    ${(extOf(name) === 'kos' || canImg) ? `<div class="ow-item" data-a="linse"><div class="ow-ico">${icon('layers', 17)}</div><div class="ow-name">In der K-OS Linse öffnen</div></div><div class="ow-divider"></div>` : ''}
     <div class="ow-item" data-a="open"><div class="ow-ico">${icon('external', 17)}</div><div class="ow-name">Öffnen / Teilen</div></div>
     <div class="ow-item" data-a="openwith"><div class="ow-ico">${icon('layers', 17)}</div><div class="ow-name">Öffnen mit…</div></div>
     <div class="ow-divider"></div>
@@ -2929,6 +2959,15 @@ async function quickMetaToggle(kind) {
 
 function fileAction(kind) {
   if (!currentFile) return;
+  if (kind === 'linse') {
+    const cf = currentFile;
+    const pth = filePath(cf.p, cf.folder, cf.name);
+    closeSheets();
+    if (!pth) { toast('Datei ohne Dropbox-Pfad'); return; }
+    if (extOf(cf.name) === 'kos') kosOpenContainer(pth, cf.name.replace(/\.kos$/i, ''));
+    else kosBildDialog(pth, cf.name);
+    return;
+  }
   if (kind === 'open') {
     const cf = currentFile;
     closeSheets();
@@ -3518,6 +3557,7 @@ function openProjectSheet() {
   if (!p) return;
   $('proj-sheet-title').textContent = p.meta.title;
   $('project-actions').innerHTML = `
+    <div class="ow-item" data-a="pkos"><div class="ow-ico">${icon('layers', 17)}</div><div class="ow-name">Neues K-OS Dokument</div></div>
     <div class="ow-item" data-a="pfolder"><div class="ow-ico">${icon('folder', 17)}</div><div class="ow-name">Neuer Ordner</div></div>
     <div class="ow-item" data-a="ptags"><div class="ow-ico">${icon('list', 17)}</div><div class="ow-name">Tags bearbeiten</div></div>
     <div class="ow-item" data-a="prename"><div class="ow-ico">${icon('pen', 17)}</div><div class="ow-name">Projekt umbenennen</div></div>
@@ -3532,7 +3572,8 @@ function projectAction(a) {
   const p = currentProject;
   hideSheetsUI(); history.back();
   setTimeout(() => {
-    if (a === 'pfolder') { $('newfolder-input').value = ''; openSheet('sheet-newfolder'); }
+    if (a === 'pkos') { kosNeuDialog(p, null); }
+    else if (a === 'pfolder') { $('newfolder-input').value = ''; openSheet('sheet-newfolder'); }
     else if (a === 'ptags') { $('tags-input').value = (p.meta.tags || []).join(', '); openSheet('sheet-tags'); }
     else if (a === 'prename') {
       currentFile = null;
@@ -3689,6 +3730,171 @@ async function clearOfflineCache() {
   thumbCache.clear();
   toast('Offline-Cache geleert');
   openSettings();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BRÜCKE ZUR K-OS LINSE
+   Files ist das Regal, die Linse die Werkbank. Verbunden über die
+   Datei: .kos öffnet die Linse, ein Bild fragt nach, ein neues
+   Dokument entsteht dort, wo man gerade im Baum steht.
+   ══════════════════════════════════════════════════════════════════ */
+const KOS_FORMATE = [
+  { id: 'wand',  nm: 'Wandbild',        w: 1600, h: 760 },
+  { id: 'quad',  nm: 'Instagram 1:1',   w: 1080, h: 1080 },
+  { id: 'hoch',  nm: 'Instagram 4:5',   w: 1080, h: 1350 },
+  { id: 'story', nm: 'Story 9:16',      w: 1080, h: 1920 },
+  { id: 'a4',    nm: 'A4 · 300 dpi',    w: 2480, h: 3508 },
+  { id: 'a3',    nm: 'A3 · 300 dpi',    w: 3508, h: 4961 },
+  { id: 'hd',    nm: '16:9',            w: 1920, h: 1080 }
+];
+function kosLast() {
+  try { return JSON.parse(localStorage.getItem('kos_linse_last') || 'null'); } catch (e) { return null; }
+}
+function kosSetLast(path, name) {
+  try { localStorage.setItem('kos_linse_last', JSON.stringify({ path, name, t: Date.now() })); } catch (e) {}
+}
+/* Übergabe an die Linse: Auftrag hinterlegen und dorthin wechseln */
+function kosHandOff(auftrag) {
+  try { localStorage.setItem('kos_linse_auftrag', JSON.stringify(auftrag)); } catch (e) {}
+  if (auftrag.path) kosSetLast(auftrag.path, auftrag.name || '');
+  try {
+    if (window.top !== window.self) { window.top.location.hash = '#lens=linse'; return; }
+  } catch (e) {}
+  location.href = './index.html#lens=linse';
+}
+function kosOpenContainer(path, name) {
+  kosHandOff({ art: 'oeffnen', path, name });
+  toast('Öffne in der Linse …');
+}
+function kosOpenImage(path, name, alsNeu) {
+  kosHandOff({ art: alsNeu ? 'bild_neu' : 'bild_material', path, name });
+  toast(alsNeu ? 'Neues Dokument aus dem Bild …' : 'Als Material in die Linse …');
+}
+/* Leeren .kos-Container schreiben — dort, wo man im Baum steht */
+function kosLeerContainer(nameOhne, w, h) {
+  const enc = new TextEncoder();
+  const manifest = {
+    name: nameOhne, w, h, durchblick: 30, staende: [],
+    bleed: 0, grid: { on: false, size: 64, snap: false }, groups: [],
+    stack: [
+      { typ: 'pixel',  name: 'Pixel 1',  opacity: 1, visible: true, locked: false, vorlage: false, blend: 'source-over', group: null, file: 'pixel/0.png' },
+      { typ: 'pfade',  name: 'Pfade 1',  opacity: 1, visible: true, locked: false, vorlage: false, blend: 'source-over', group: null, file: 'pfade/1.svg' },
+      { typ: 'layout', name: 'Layout 1', opacity: 1, visible: true, locked: false, vorlage: false, blend: 'source-over', group: null, file: 'layout/2.json' }
+    ]
+  };
+  const leerPng = Uint8Array.from(atob(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg=='
+  ), c => c.charCodeAt(0));
+  return kosZip([
+    { name: 'manifest.json', data: enc.encode(JSON.stringify(manifest, null, 1)) },
+    { name: 'pixel/0.png',   data: leerPng },
+    { name: 'pfade/1.svg',   data: enc.encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + w + ' ' + h + '"></svg>') },
+    { name: 'layout/2.json', data: enc.encode('[]') }
+  ]);
+}
+/* ZIP ohne Kompression — dasselbe Format, das die Linse liest */
+const KOS_CRC = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n;
+  for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; } return t; })();
+function kosCrc32(u8) { let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = KOS_CRC[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0; }
+function kosZip(files) {
+  const parts = [], central = [], enc = new TextEncoder();
+  let off = 0;
+  files.forEach(f => {
+    const nm = enc.encode(f.name), d = f.data, crc = kosCrc32(d);
+    const lh = new Uint8Array(30 + nm.length), v = new DataView(lh.buffer);
+    v.setUint32(0, 0x04034b50, true); v.setUint16(4, 20, true);
+    v.setUint32(14, crc, true); v.setUint32(18, d.length, true); v.setUint32(22, d.length, true);
+    v.setUint16(26, nm.length, true);
+    lh.set(nm, 30);
+    parts.push(lh, d);
+    const ch = new Uint8Array(46 + nm.length), cv = new DataView(ch.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+    cv.setUint32(16, crc, true); cv.setUint32(20, d.length, true); cv.setUint32(24, d.length, true);
+    cv.setUint16(28, nm.length, true); cv.setUint32(42, off, true);
+    ch.set(nm, 46);
+    central.push(ch);
+    off += lh.length + d.length;
+  });
+  const cSize = central.reduce((s, c) => s + c.length, 0);
+  const end = new Uint8Array(22), ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cSize, true); ev.setUint32(16, off, true);
+  const out = new Uint8Array(off + cSize + 22);
+  let p = 0;
+  parts.concat(central).concat([end]).forEach(u => { out.set(u, p); p += u.length; });
+  return out;
+}
+/* Dialog: neues Dokument im aktuellen Ordner */
+function kosNeuDialog(project, folder) {
+  const p = project || currentProject;
+  if (!p) { toast('Erst ein Projekt öffnen'); return; }
+  const box = document.createElement('div');
+  box.id = 'kos-neu';
+  box.innerHTML = `
+    <div class="kn-card">
+      <div class="kn-h">Neues K-OS Dokument</div>
+      <div class="kn-sub">${p.meta.name}${folder ? ' · ' + folder : ''}</div>
+      <input id="kn-name" class="kn-in" placeholder="Name" value="${(p.meta.name || 'entwurf').toLowerCase().replace(/[^a-z0-9]+/g, '_')}">
+      <div class="kn-grid">
+        ${KOS_FORMATE.map((f, i) => `<button class="kn-f${i === 0 ? ' on' : ''}" data-f="${f.id}">
+          <b>${f.nm}</b><span>${f.w} × ${f.h}</span></button>`).join('')}
+      </div>
+      <div class="kn-row">
+        <button class="kn-btn" id="kn-abbr">Abbrechen</button>
+        <button class="kn-btn prim" id="kn-ok">Anlegen und öffnen</button>
+      </div>
+    </div>`;
+  document.body.appendChild(box);
+  let fmt = KOS_FORMATE[0];
+  box.querySelectorAll('.kn-f').forEach(b => b.onclick = () => {
+    box.querySelectorAll('.kn-f').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    fmt = KOS_FORMATE.find(f => f.id === b.dataset.f);
+  });
+  const close = () => box.remove();
+  box.onclick = e => { if (e.target === box) close(); };
+  $('kn-abbr').onclick = close;
+  $('kn-ok').onclick = async () => {
+    const nm = ($('kn-name').value || 'entwurf').trim().replace(/\.kos$/i, '');
+    if (!nm) { toast('Name fehlt'); return; }
+    $('kn-ok').textContent = 'Lege an …';
+    try {
+      const path = filePath(p, folder, nm + '.kos');
+      if (!path) throw new Error('Projekt ohne Dropbox-Ordner');
+      await dbxUpload(path, kosLeerContainer(nm, fmt.w, fmt.h), 'add');
+      close();
+      toast('Angelegt: ' + nm + '.kos');
+      kosOpenContainer(path, nm);
+    } catch (e) {
+      $('kn-ok').textContent = 'Anlegen und öffnen';
+      toast('Fehlgeschlagen: ' + (e.message || e));
+    }
+  };
+}
+/* Dialog: Bild angetippt */
+function kosBildDialog(path, name) {
+  const box = document.createElement('div');
+  box.id = 'kos-neu';
+  box.innerHTML = `
+    <div class="kn-card">
+      <div class="kn-h">${name}</div>
+      <div class="kn-sub">In der K-OS Linse öffnen</div>
+      <div class="kn-opt" data-o="neu"><b>Als neues Dokument</b>
+        <span>Das Bild wird Materialebene, das Blatt übernimmt seine Größe</span></div>
+      <div class="kn-opt" data-o="mat"><b>Ins offene Dokument</b>
+        <span>Als zusätzliche Materialebene einfügen</span></div>
+      <div class="kn-row"><button class="kn-btn" id="kn-abbr2">Abbrechen</button></div>
+    </div>`;
+  document.body.appendChild(box);
+  const close = () => box.remove();
+  box.onclick = e => { if (e.target === box) close(); };
+  $('kn-abbr2').onclick = close;
+  box.querySelectorAll('.kn-opt').forEach(o => o.onclick = () => {
+    close();
+    kosOpenImage(path, name, o.dataset.o === 'neu');
+  });
 }
 
 /* ════════ LIGHTBOX ════════ */

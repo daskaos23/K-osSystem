@@ -31,6 +31,10 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
   padding:10px 12px 20px;z-index:20}
 
 /* ══════════ TOPBAR ══════════ */
+#homeBtn{width:34px;height:32px;flex:0 0 34px;border:1px solid transparent;background:transparent;
+  border-radius:9px;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+#homeBtn:hover{border-color:var(--line2);background:#11181d}
+#homeBtn img{width:26px;height:26px;object-fit:contain;display:block}
 .brand{font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.06em;white-space:nowrap}
 .brand b{font-weight:800}
 .brand .ln{font-weight:800;margin-left:4px}
@@ -270,6 +274,7 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
 <body>
 <div id="app">
   <div id="topbar">
+    <button id="homeBtn" title="Start &#183; K-OS (Taste 0)"><img src="brand-mark.png" alt="K-OS"></button>
     <span class="brand mono">K&#8212;OS <b class="ln" id="lensName">DRAW</b></span>
     <span class="docname" id="docName">wandbild_bahnhof</span>
     <div id="cmdwrap"><div id="cmd">
@@ -337,6 +342,9 @@ body{background:var(--bg);color:var(--tx);font-family:system-ui,'Roboto',sans-se
       <div class="frow">
         <button class="hbtn" id="dbxSave">&#8681; In Ablage</button>
         <button class="hbtn" id="dbxList">&#8635; Aus Ablage &#8230;</button>
+      </div>
+      <div class="frow">
+        <button class="hbtn" id="toFiles">&#9635; Zur Ablage (K-OS Files)</button>
       </div>
       <div id="dbxState" class="mono" style="font-size:11px;color:var(--tx3);margin-top:7px"></div>
       <div id="dbxFiles"></div>
@@ -1513,7 +1521,7 @@ function endStroke(){
   } else if(d.kind==='guideH'){
     /* nichts weiter zu tun */
   } else if(d.kind==='selT'){
-    /* Umriss bleibt schwebend, bis Verschieben endet */
+    syncSelToFloat();
   } else if(d.kind==='lasso'){
     selFromPath(d.pts);
     toast(sel?'Lasso-Auswahl gesetzt':'Auswahl aufgehoben');
@@ -1526,7 +1534,7 @@ function endStroke(){
   } else if(d.kind==='grad'){
     applyGradient(d.l,d.start,d.cur||d.start);
   } else if(d.kind==='movePix'){
-    commitMovePix(d);
+    syncSelToFloat();          /* bleibt schwebend — erst der Werkzeugwechsel setzt ab */
   } else if(d.kind==='brush'){
     endBrush(d);
   } else if(d.kind==='fx'){
@@ -1568,24 +1576,30 @@ function beginPixel(t,l,pt,pres,pid){
   beginBrush(l,pt,pres,t==='eraser',pid);
 }
 function liftPix(l){
-  if(selEmpty()||floatPix) return;
+  if(selEmpty()||floatPix||!l||l.typ!=='pixel') return;
   preSnap(l);
+  var sx=Math.round(sel.x), sy=Math.round(sel.y);
+  var sw=Math.max(1,Math.round(sel.w)), sh=Math.max(1,Math.round(sel.h));
   var cv=document.createElement('canvas');
-  cv.width=Math.max(1,Math.round(sel.w)); cv.height=Math.max(1,Math.round(sel.h));
+  cv.width=sw; cv.height=sh;
   var cg=cv.getContext('2d');
-  cg.drawImage(l.data.cv,-sel.x,-sel.y);
+  cg.drawImage(l.data.cv,-sx,-sy);
   if(sel.mask){
     cg.save(); cg.globalCompositeOperation='destination-in';
-    cg.drawImage(sel.mask,0,0); cg.restore();
+    cg.drawImage(sel.mask,0,0,sw,sh); cg.restore();
   }
   var g=l.data.cv.getContext('2d');
   g.save(); g.globalCompositeOperation='destination-out';
-  if(sel.mask) g.drawImage(sel.mask,sel.x,sel.y);
-  else { g.fillStyle='#000'; g.fillRect(sel.x,sel.y,sel.w,sel.h); }
+  if(sel.mask) g.drawImage(sel.mask,sx,sy,sw,sh);
+  else { g.fillStyle='#000'; g.fillRect(sx,sy,sw,sh); }
   g.restore();
-  floatPix={cv:cv,x:sel.x,y:sel.y,w:sel.w,h:sel.h,rot:0};
+  /* Die Maske steckt jetzt im Ausschnitt — der schwebende Teil ist ein Bild,
+     das Zielrechteck bestimmt allein, wo und wie groß es landet.            */
+  floatPix={cv:cv,x:sx,y:sy,w:sw,h:sh,rot:0,layerId:l.id,
+            mask0:sel.mask,poly0:sel.poly,w0:sw,h0:sh,x0:sx,y0:sy};
+  sel.x=sx; sel.y=sy; sel.w=sw; sel.h=sh;
   pushPixelUndo(l,{x0:0,y0:0,x1:doc.w,y1:doc.h});
-  invalidate('pixel');
+  invalidate('pixel'); req();
 }
 function movePixTo(pt){
   if(!floatPix||!drag) return;
@@ -1594,26 +1608,47 @@ function movePixTo(pt){
   sel.x=floatPix.x; sel.y=floatPix.y;
   req();
 }
+/* Umriss und Maske der Auswahl der Verwandlung nachziehen */
+function syncSelToFloat(){
+  if(!floatPix) return;
+  sel.x=floatPix.x; sel.y=floatPix.y;
+  sel.w=floatPix.w||floatPix.cv.width; sel.h=floatPix.h||floatPix.cv.height;
+  var moved=(floatPix.w===floatPix.w0&&floatPix.h===floatPix.h0&&!floatPix.rot);
+  if(moved&&floatPix.mask0){
+    sel.mask=floatPix.mask0;
+    var dx=sel.x-floatPix.x0, dy=sel.y-floatPix.y0;
+    sel.poly=floatPix.poly0?floatPix.poly0.map(function(c){
+      return c.map(function(p){ return {x:p.x+dx,y:p.y+dy}; });
+    }):null;
+  } else {
+    sel.mask=null; sel.poly=null;    /* verwandelt: der Rahmen ist die neue Form */
+  }
+}
 function commitMovePix(d){
-  d=d||drag;
-  if(!floatPix||!d) return;
-  var g=d.l.data.cv.getContext('2d');
+  if(!floatPix) return;
+  var l=(d&&d.l)||layerById(floatPix.layerId)||activeLayer();
+  if(!l||l.typ!=='pixel'){ floatPix=null; invalidate('pixel'); req(); return; }
+  var g=l.data.cv.getContext('2d');
   var fw=floatPix.w||floatPix.cv.width, fh=floatPix.h||floatPix.cv.height;
   g.save();
+  g.globalCompositeOperation='source-over';
+  g.globalAlpha=1;
   g.translate(floatPix.x+fw/2,floatPix.y+fh/2);
   if(floatPix.rot) g.rotate(floatPix.rot);
   g.drawImage(floatPix.cv,-fw/2,-fh/2,fw,fh);
   g.restore();
-  floatPix=null; invalidate('pixel');
+  syncSelToFloat();
+  floatPix=null;
+  invalidate('pixel'); req();
 }
 /* Schwebende Auswahl absetzen, sobald das Werkzeug wechselt */
 function dropFloat(){
   if(!floatPix) return;
-  var l=activeLayer();
-  if(l&&l.typ==='pixel') commitMovePix({l:l});
-  else floatPix=null;
-  req();
+  commitMovePix(null);
+  autosaveSoon();
 }
+/* Schwebende Auswahl verwerfen (für Zurück) — der Ausschnitt wird NICHT abgesetzt */
+function discardFloat(){ floatPix=null; }
 function applyGradient(l,a,b){
   preSnap(l);
   var g=l.data.cv.getContext('2d');
@@ -1687,7 +1722,8 @@ function decimate(pts,minD){
 /* ══════════ LINEAL · SCHABLONE · SPIEGEL ══════════ */
 var guide={rule:'aus',ang:0,vp:null,el:null,mirror:'aus',axes:6};
 var lastTap={t:0,x:0,y:0};
-function guideCenter(){ return {x:doc.w/2,y:doc.h/2}; }
+function guideCenter(){ return guide.mc||{x:doc.w/2,y:doc.h/2}; }
+function guideOrg(){ if(!guide.org) guide.org={x:doc.w*0.2,y:doc.h*0.5}; return guide.org; }
 function ensureVp(){ if(!guide.vp) guide.vp={x:doc.w/2,y:-doc.h*0.35}; return guide.vp; }
 function ensureEl(){ if(!guide.el) guide.el={cx:doc.w/2,cy:doc.h/2,rx:doc.w*0.30,ry:doc.h*0.26}; return guide.el; }
 function projDir(pt,start,ang){
@@ -1754,10 +1790,23 @@ function drawGuides(g){
   var r=guide.rule, dash=[10/view.scale,8/view.scale];
   g.save(); g.setLineDash(dash); g.lineWidth=1.6/view.scale; g.strokeStyle='#9fb0bb88';
   if(r==='gerade'){
-    var c=guideCenter(), a=guide.ang*Math.PI/180, L=Math.max(doc.w,doc.h);
-    var s=drag&&drag.start?drag.start:c;
-    g.beginPath(); g.moveTo(s.x-Math.cos(a)*L,s.y-Math.sin(a)*L);
-    g.lineTo(s.x+Math.cos(a)*L,s.y+Math.sin(a)*L); g.stroke();
+    var o=guideOrg(), a=guide.ang*Math.PI/180, L=Math.max(doc.w,doc.h)*1.6;
+    /* das Lineal selbst liegt am Griff */
+    g.beginPath();
+    g.moveTo(o.x-Math.cos(a)*L,o.y-Math.sin(a)*L);
+    g.lineTo(o.x+Math.cos(a)*L,o.y+Math.sin(a)*L);
+    g.stroke();
+    /* während des Strichs zusätzlich die tatsächlich benutzte Parallele */
+    if(drag&&drag.start){
+      g.save();
+      g.setLineDash([]);
+      g.strokeStyle=LENS[lens].c+'cc'; g.lineWidth=1.4/view.scale;
+      g.beginPath();
+      g.moveTo(drag.start.x-Math.cos(a)*L,drag.start.y-Math.sin(a)*L);
+      g.lineTo(drag.start.x+Math.cos(a)*L,drag.start.y+Math.sin(a)*L);
+      g.stroke();
+      g.restore();
+    }
   } else if(r==='persp'){
     var vp=ensureVp(), L2=Math.max(doc.w,doc.h)*2;
     for(var i=0;i<7;i++){
@@ -1767,6 +1816,16 @@ function drawGuides(g){
   } else if(r==='ellipse'){
     var el=ensureEl();
     g.beginPath(); g.ellipse(el.cx,el.cy,el.rx,el.ry,0,0,Math.PI*2); g.stroke();
+  } else if(r==='winkel'){
+    /* Rasterstern am Ursprung: zeigt die 15°-Schritte */
+    var o2=guideOrg(), L2=Math.max(doc.w,doc.h)*0.5;
+    for(var wi=0;wi<12;wi++){
+      var wa=wi*Math.PI/12;
+      g.beginPath();
+      g.moveTo(o2.x-Math.cos(wa)*L2,o2.y-Math.sin(wa)*L2);
+      g.lineTo(o2.x+Math.cos(wa)*L2,o2.y+Math.sin(wa)*L2);
+      g.stroke();
+    }
   } else if(r==='kreis'){
     var cc=guideCenter();
     g.beginPath(); g.arc(cc.x,cc.y,Math.min(doc.w,doc.h)*0.32,0,Math.PI*2); g.stroke();
@@ -1886,7 +1945,36 @@ function maskOut(cv){
   g.restore();
 }
 function selFromRect(x,y,w,h){
-  sel={x:x,y:y,w:w,h:h,mask:null};
+  sel={x:x,y:y,w:w,h:h,mask:null,poly:null};
+}
+/* Umriss einer Maske nachzeichnen (Moore-Nachbarschaft, grob gerastert) */
+function maskContours(m,ox,oy){
+  var g=m.getContext('2d'), img;
+  try{ img=g.getImageData(0,0,m.width,m.height); }catch(e){ return null; }
+  var d=img.data, W=m.width, H=m.height, S=2;
+  function on(x,y){ if(x<0||y<0||x>=W||y>=H) return 0; return d[(y*W+x)*4+3]>96?1:0; }
+  var dirs=[[S,0],[S,S],[0,S],[-S,S],[-S,0],[-S,-S],[0,-S],[S,-S]];
+  var seen={}, out=[];
+  for(var y0=0;y0<H;y0+=S) for(var x0=0;x0<W;x0+=S){
+    if(!on(x0,y0)||on(x0-S,y0)) continue;
+    var key=(x0/S|0)+'_'+(y0/S|0);
+    if(seen[key]) continue;
+    var x=x0,y=y0,dir=6,path=[],guard=0;
+    do{
+      path.push({x:x+ox,y:y+oy});
+      seen[(x/S|0)+'_'+(y/S|0)]=1;
+      var found=false;
+      for(var i=0;i<8;i++){
+        var nd=(dir+6+i)%8, nx=x+dirs[nd][0], ny=y+dirs[nd][1];
+        if(on(nx,ny)){ x=nx; y=ny; dir=nd; found=true; break; }
+      }
+      if(!found) break;
+      if(++guard>6000) break;
+    }while(!(x===x0&&y===y0));
+    if(path.length>6) out.push(path);
+    if(out.length>=12) break;
+  }
+  return out.length?out:null;
 }
 function selFromPath(pts){
   if(!pts||pts.length<3){ sel=null; return; }
@@ -1903,7 +1991,8 @@ function selFromPath(pts){
   g.moveTo(pts[0].x-x0,pts[0].y-y0);
   for(var i=1;i<pts.length;i++) g.lineTo(pts[i].x-x0,pts[i].y-y0);
   g.closePath(); g.fill();
-  sel={x:x0,y:y0,w:w,h:h,mask:m};
+  sel={x:x0,y:y0,w:w,h:h,mask:m,
+       poly:[pts.map(function(p){ return {x:p.x,y:p.y}; })]};   /* der gezeichnete Umriss bleibt erhalten */
 }
 /* Zauberstab: zusammenhängende Fläche ähnlicher Farbe */
 function selFromWand(l,pt,tol){
@@ -1945,7 +2034,8 @@ function selFromWand(l,pt,tol){
     md[o]=255; md[o+1]=255; md[o+2]=255; md[o+3]=255;
   }
   mg.putImageData(mi,0,0);
-  sel={x:minX,y:minY,w:bw,h:bh,mask:m};
+  sel={x:minX,y:minY,w:bw,h:bh,mask:m,poly:null};
+  sel.poly=maskContours(m,minX,minY);
   toast('Ausgewählt: '+count.toLocaleString('de-DE')+' Punkte');
 }
 function selAllDoc(){ selFromRect(0,0,doc.w,doc.h); }
@@ -1958,21 +2048,45 @@ function selInvert(){
   if(sel.mask) g.drawImage(sel.mask,sel.x,sel.y);
   else g.fillRect(sel.x,sel.y,sel.w,sel.h);
   g.restore();
-  sel={x:0,y:0,w:doc.w,h:doc.h,mask:m};
+  sel={x:0,y:0,w:doc.w,h:doc.h,mask:m,poly:null};
+  sel.poly=maskContours(m,0,0);
   toast('Auswahl umgekehrt');
 }
 /* Umriss der Auswahl zeichnen */
 function drawSelOutline(g){
   if(selEmpty()) return;
   g.save();
-  g.lineWidth=1.6/view.scale;
+  /* Schwebt die Auswahl, zeigt der Rahmen die Verwandlung — sonst die echte Form */
+  if(floatPix){
+    var fw=floatPix.w||floatPix.cv.width, fh=floatPix.h||floatPix.cv.height;
+    g.translate(floatPix.x+fw/2,floatPix.y+fh/2);
+    if(floatPix.rot) g.rotate(floatPix.rot);
+    g.lineWidth=1.6/view.scale;
+    g.setLineDash([7/view.scale,5/view.scale]);
+    g.strokeStyle='#ffffff'; g.strokeRect(-fw/2,-fh/2,fw,fh);
+    g.setLineDash([]); g.lineWidth=1/view.scale;
+    g.strokeStyle=LENS[lens].c;
+    g.strokeRect(-fw/2-1/view.scale,-fh/2-1/view.scale,fw+2/view.scale,fh+2/view.scale);
+    g.restore(); return;
+  }
+  function trace(){
+    if(sel.poly&&sel.poly.length){
+      sel.poly.forEach(function(c){
+        if(c.length<2) return;
+        g.beginPath(); g.moveTo(c[0].x,c[0].y);
+        for(var i=1;i<c.length;i++) g.lineTo(c[i].x,c[i].y);
+        g.closePath(); g.stroke();
+      });
+    } else {
+      g.beginPath(); g.rect(sel.x,sel.y,sel.w,sel.h); g.stroke();
+    }
+  }
+  g.lineWidth=2/view.scale; g.strokeStyle='#0a0a0aaa'; g.setLineDash([]);
+  trace();
+  g.lineWidth=1.4/view.scale; g.strokeStyle='#ffffff';
   g.setLineDash([7/view.scale,5/view.scale]);
-  g.strokeStyle='#ffffff';
-  g.strokeRect(sel.x,sel.y,sel.w,sel.h);
-  g.strokeStyle=LENS[lens].c;
+  trace();
   g.setLineDash([]);
-  g.lineWidth=1/view.scale;
-  g.strokeRect(sel.x-1/view.scale,sel.y-1/view.scale,sel.w+2/view.scale,sel.h+2/view.scale);
   g.restore();
 }
 /* ══════════ AUSWAHL VERSCHIEBEN, SKALIEREN, DREHEN ══════════ */
@@ -1995,7 +2109,7 @@ function hitSelHandle(pt){
   return null;
 }
 function drawSelHandles(g){
-  if(selEmpty()||!floatPix) return;
+  if(selEmpty()||(tool()!=='move'&&!floatPix)) return;
   var s=7/view.scale;
   g.save();
   g.lineWidth=1.6/view.scale;
@@ -2017,7 +2131,7 @@ function beginSelTransform(h,pt,pid,l){
   if(!floatPix) liftPix(l);
   if(!floatPix) return;
   drag={kind:'selT',l:l,h:h.id,start:pt,id:pid,
-        orig:{x:sel.x,y:sel.y,w:sel.w,h:sel.h,rot:floatPix.rot||0}};
+        orig:{x:floatPix.x,y:floatPix.y,w:floatPix.w,h:floatPix.h,rot:floatPix.rot||0}};
 }
 function selTransform(pt){
   if(!drag||!floatPix) return;
@@ -2031,8 +2145,8 @@ function selTransform(pt){
     else if(drag.h==='nw'){ nx=Math.min(pt.x,o.x+o.w-8); ny=Math.min(pt.y,o.y+o.h-8); nw=o.x+o.w-nx; nh=o.y+o.h-ny; }
     else if(drag.h==='ne'){ ny=Math.min(pt.y,o.y+o.h-8); nw=Math.max(8,pt.x-o.x); nh=o.y+o.h-ny; }
     else if(drag.h==='sw'){ nx=Math.min(pt.x,o.x+o.w-8); nw=o.x+o.w-nx; nh=Math.max(8,pt.y-o.y); }
-    sel.x=nx; sel.y=ny; sel.w=nw; sel.h=nh;
     floatPix.x=nx; floatPix.y=ny; floatPix.w=nw; floatPix.h=nh;
+    sel.x=nx; sel.y=ny; sel.w=nw; sel.h=nh;
   }
   req();
 }
@@ -2051,10 +2165,13 @@ function guideHandles(){
              {id:'erx',x:el.cx+el.rx,y:el.cy,nm:'Breite'},
              {id:'ery',x:el.cx,y:el.cy+el.ry,nm:'Höhe'});
   } else if(guide.rule==='gerade'){
-    var o=guide.org||(guide.org={x:doc.w*0.2,y:doc.h*0.5});
+    var o=guideOrg();
     out.push({id:'go',x:o.x,y:o.y,nm:'Ursprung'},
              {id:'ga',x:o.x+Math.cos(guide.ang*Math.PI/180)*160,
                      y:o.y+Math.sin(guide.ang*Math.PI/180)*160,nm:'Winkel'});
+  } else if(guide.rule==='winkel'){
+    var ow=guideOrg();
+    out.push({id:'go',x:ow.x,y:ow.y,nm:'Ursprung'});
   } else if(guide.mirror==='radial'||guide.mirror==='x'||guide.mirror==='xy'){
     var c=guideCenter();
     out.push({id:'mc',x:c.x,y:c.y,nm:'Spiegelmitte'});
@@ -3063,10 +3180,12 @@ function applyEntry(e){
     ['pixel','pfade','layout'].forEach(invalidate);
   }
   overlaySel=null;
+  if(e.t==='pixels'&&typeof sel!=='undefined'&&sel&&sel.mask===null&&!sel.poly){ /* Rechteck darf bleiben */ }
   return back;
 }
 function doUndo(quiet){
   if(drag){ if(!quiet) toast('Erst den Strich beenden'); return; }
+  if(typeof discardFloat==='function') discardFloat();   /* Schwebendes verwerfen, nicht absetzen */
   var e=undoStack.pop();
   if(!e){ if(!quiet) toast('Nichts r\u00FCckg\u00E4ngig zu machen'); return; }
   undoBytes-=entryBytes(e);
@@ -3077,6 +3196,7 @@ function doUndo(quiet){
 }
 function doRedo(quiet){
   if(drag) return;
+  if(typeof discardFloat==='function') discardFloat();
   var e=redoStack.pop();
   if(!e){ if(!quiet) toast('Nichts zu wiederholen'); return; }
   var back=applyEntry(e);
@@ -3261,6 +3381,7 @@ function ensureStrokeCv(){
   return strokeCx;
 }
 function beginBrush(l,pt,pres,erase,pid){
+  if(typeof dropFloat==='function') dropFloat();     /* erst absetzen, dann malen */
   var b=erase?getBrush('hart','px'):curBrush();
   preSnap(l);                                   /* Abzug für „Zurück" */
   ensureStrokeCv();
@@ -4491,7 +4612,8 @@ function commands(){
   c.push({t:'Wieder vor',k:'Bearbeiten',fn:doRedo});
   c.push({t:'Ansicht einpassen',k:'Ansicht',fn:function(){fitView();req();}});
   c.push({t:'Datei speichern (.kos)',k:'Datei',fn:saveKos});
-  c.push({t:'In die Ablage legen (Dropbox)',k:'Ablage',fn:dbxSaveKos});
+  c.push({t:'In die Ablage legen (Dropbox)',k:'Ablage',fn:speichernInAblage});
+  c.push({t:'Zur Ablage (K-OS Files)',k:'Ablage',fn:gotoFiles});
   c.push({t:'Aus der Ablage \u00F6ffnen (Dropbox)',k:'Ablage',fn:function(){ closeWins(); $('winfile').classList.add('show'); dbxListKos(); }});
   c.push({t:'Ebene l\u00F6schen \u00B7 umbenennen \u00B7 Deckkraft',k:'Stapel',fn:function(){ var l=activeLayer(); if(l) openLayerWin(l); }});
   c.push({t:'Lineal \u00B7 Schablone \u00B7 Spiegel',k:'Hilfslinien',fn:function(){ openWin('winRuler'); }});
@@ -4846,9 +4968,127 @@ function dbxOpenKos(path){
 function dbxState(){
   var el=$('dbxState');
   if(!el) return;
-  el.textContent=dbxConnected()
-    ? 'Dropbox verbunden \u00B7 Ordner '+DBX_DIR
-    : 'Nicht verbunden \u2014 in K-OS Files (Taste 4) mit Dropbox anmelden';
+  el.textContent=!dbxConnected()
+    ? 'Nicht verbunden \u2014 in K-OS Files (Taste 4) mit Dropbox anmelden'
+    : (kosPfad ? 'Offen aus der Ablage: '+kosPfad
+               : 'Verbunden \u00B7 \u201EIn Ablage\u201C legt nach '+DBX_DIR);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   AUFTRÄGE AUS DER ABLAGE
+   Files legt einen Auftrag ab und wechselt hierher. Der zuletzt
+   geöffnete Container wird beim Start wieder geladen.
+   ══════════════════════════════════════════════════════════════════ */
+var kosPfad=null;                    /* Dropbox-Pfad des offenen Containers */
+function setPfad(p,name){
+  kosPfad=p||null;
+  if(p){
+    try{ localStorage.setItem('kos_linse_last',JSON.stringify({path:p,name:name||doc.name,t:Date.now()})); }catch(e){}
+  }
+  $('docName').textContent=doc.name+(kosPfad?'':'  \u00B7 nicht in der Ablage');
+  $('docName').title=kosPfad||'Noch nicht in der Ablage gespeichert';
+}
+function takeAuftrag(){
+  var a=null;
+  try{ a=JSON.parse(localStorage.getItem('kos_linse_auftrag')||'null'); }catch(e){}
+  if(!a) return null;
+  try{ localStorage.removeItem('kos_linse_auftrag'); }catch(e){}
+  return a;
+}
+function dbxDownload(path){
+  return dbxToken().then(function(at){
+    return fetch('https://content.dropboxapi.com/2/files/download',{
+      method:'POST',headers:{'Authorization':'Bearer '+at,'Dropbox-API-Arg':JSON.stringify({path:path})}
+    });
+  }).then(function(r){
+    if(r.status===401) return dbxRefresh().then(function(){ return dbxDownload(path); });
+    if(!r.ok) throw new Error('Laden '+r.status);
+    return r.arrayBuffer();
+  });
+}
+/* Bild als Materialebene einsetzen */
+function bildAlsMaterial(bytes,name,alsNeu,done){
+  var b64=u8b64(new Uint8Array(bytes));
+  var mime=/\.png$/i.test(name)?'image/png':(/\.webp$/i.test(name)?'image/webp':'image/jpeg');
+  var img=new Image();
+  img.onload=function(){
+    var iw=img.width||1600, ih=img.height||900;
+    if(alsNeu){
+      newDoc(name.replace(/\.[a-z0-9]+$/i,''),iw,ih);
+      var mat=mkLayer('material',name,{img:img,src:img.src});
+      doc.stack=[mat,pixelLayer('Pixel 1'),
+                 mkLayer('pfade','Pfade 1',{paths:[]}),
+                 mkLayer('layout','Layout 1',{els:[]})];
+      activeByLens={draw:doc.stack[1].id,vektor:doc.stack[2].id,studio:doc.stack[3].id};
+    } else {
+      var m2=mkLayer('material',name,{img:img,src:img.src});
+      doc.stack.unshift(m2);
+    }
+    ['pixel','pfade','layout'].forEach(invalidate);
+    if(done) done();
+  };
+  img.onerror=function(){ toast('Bild nicht lesbar'); if(done) done(); };
+  img.src='data:'+mime+';base64,'+b64;
+}
+function runAuftrag(a,done){
+  if(!a){ if(done) done(false); return; }
+  if(!dbxConnected()){
+    toast('Nicht mit Dropbox verbunden \u2014 in der Ablage anmelden');
+    if(done) done(false); return;
+  }
+  toast('Hole aus der Ablage \u2026');
+  dbxDownload(a.path).then(function(buf){
+    if(a.art==='oeffnen'){
+      loadKosBytes(new Uint8Array(buf),function(){
+        setPfad(a.path,a.name);
+        afterDocLoad();
+        toast('Ge\u00F6ffnet: '+doc.name);
+        if(done) done(true);
+      });
+    } else {
+      bildAlsMaterial(buf,a.name,a.art==='bild_neu',function(){
+        if(a.art==='bild_neu') setPfad(null);
+        afterDocLoad(); autosaveSoon();
+        toast(a.art==='bild_neu'?'Neues Dokument aus '+a.name:'Material eingef\u00FCgt: '+a.name);
+        if(done) done(true);
+      });
+    }
+  }).catch(function(err){
+    toast('Ablage: '+(err.message||err));
+    if(done) done(false);
+  });
+}
+/* Zuletzt geöffneten Container wieder laden */
+function ladeZuletzt(done){
+  var last=null;
+  try{ last=JSON.parse(localStorage.getItem('kos_linse_last')||'null'); }catch(e){}
+  if(!last||!last.path||!dbxConnected()){ if(done) done(false); return; }
+  dbxDownload(last.path).then(function(buf){
+    loadKosBytes(new Uint8Array(buf),function(){
+      setPfad(last.path,last.name);
+      afterDocLoad();
+      toast('Zuletzt ge\u00F6ffnet: '+doc.name);
+      if(done) done(true);
+    });
+  }).catch(function(){ if(done) done(false); });
+}
+/* In die Ablage zurückschreiben — an denselben Platz */
+function speichernInAblage(){
+  if(!kosPfad) return dbxSaveKos();
+  var u8;
+  try{ u8=buildContainer(); }catch(err){ toast('Container fehlgeschlagen'); return Promise.reject(err); }
+  return dbxToken().then(function(at){
+    return fetch('https://content.dropboxapi.com/2/files/upload',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+at,
+        'Dropbox-API-Arg':JSON.stringify({path:kosPfad,mode:'overwrite',mute:true}),
+        'Content-Type':'application/octet-stream'},
+      body:u8
+    });
+  }).then(function(r){
+    if(!r.ok) throw new Error(r.status+'');
+    toast('Gespeichert: '+kosPfad);
+  }).catch(function(err){ toast('Speichern: '+(err.message||err)); });
 }
 
 /* ══════════ AUTOSAVE (IndexedDB) ══════════ */
@@ -4901,7 +5141,8 @@ $('fileBtn').addEventListener('click',function(){
 });
 wireClose($('winfile'));
 $('kosSave').addEventListener('click',function(){ closeWins(); saveKos(); });
-$('dbxSave').addEventListener('click',function(){ dbxSaveKos(); });
+$('dbxSave').addEventListener('click',function(){ speichernInAblage(); });
+$('toFiles').addEventListener('click',function(){ closeWins(true); gotoFiles(); });
 $('dbxList').addEventListener('click',function(){ dbxListKos(); });
 $('kosLoad').addEventListener('click',function(){ $('kosFile').click(); });
 $('kosFile').addEventListener('change',function(){
@@ -4955,6 +5196,16 @@ document.querySelectorAll('#spine .seg').forEach(function(s){
   s.addEventListener('pointerup',up);
   s.addEventListener('pointercancel',function(){ clearTimeout(holdT); if(held){ seeThrough=null; req(); held=false; } });
 });
+function gotoHome(){
+  try{
+    if(window.top!==window.self){
+      window.top.postMessage({type:'kos-home'},location.origin);
+      return;
+    }
+  }catch(e){}
+  location.href='./index.html';
+}
+$('homeBtn').addEventListener('click',function(){ gotoHome(); });
 function gotoFiles(){
   try{
     if(window.top!==window.self){ window.top.location.hash='#lens=files'; window.top.location.reload(); return; }
@@ -4970,6 +5221,7 @@ document.addEventListener('keydown',function(e){
   else if(k==='2') setLens('vektor');
   else if(k==='3') setLens('studio');
   else if(k==='4') gotoFiles();
+  else if(k==='0') gotoHome();
   else if(k==='k'){ $('cmdIn').focus(); e.preventDefault(); }
   /* Werkzeuge — Belegung wie in K-OS Draw */
   else if(k==='b') setTool(lens==='vektor'?'pen':(lens==='studio'?'text':'brush'));
@@ -4988,7 +5240,7 @@ document.addEventListener('keydown',function(e){
   else if(k==='w'){ setRadMode(rad.mode==='fest'?'folgend':'fest'); }
   else if(k==='escape'){ closeWins(); rad.fan=null; rad.big=false; radRelayout(); }
   /* Datei */
-  else if(k==='s'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); saveKos(); }
+  else if(k==='s'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); if(kosPfad) speichernInAblage(); else saveKos(); }
   else if(k==='z'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); if(e.shiftKey) doRedo(); else doUndo(); }
   else if(k==='y'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); doRedo(); }
   else if(k==='h'){ openWin('winHist'); }
@@ -5020,12 +5272,25 @@ function boot(){
     if(gj){ ['rule','ang','mirror','axes'].forEach(function(k){ if(k in gj) guide[k]=gj[k]; }); }
   }catch(e){}
   $('dbSl').value=durchblick; $('dbVal').textContent=durchblick+' %';
-  tryRestore(function(ok){
-    if(!ok) demoDoc();
-    afterDocLoad();
+  var auftrag=takeAuftrag();
+  function fertig(){
     setRadMode(rad.mode);
     if(rad.mode==='fest'){ if(!rad.x) centerRad(); showRad(); }
-  });
+  }
+  if(auftrag){
+    runAuftrag(auftrag,function(ok){
+      if(!ok){ tryRestore(function(o2){ if(!o2) demoDoc(); afterDocLoad(); fertig(); }); return; }
+      fertig();
+    });
+  } else {
+    ladeZuletzt(function(ok){                 /* zuletzt geöffneter Container zuerst */
+      if(ok){ fertig(); return; }
+      tryRestore(function(o2){
+        if(!o2) demoDoc();
+        afterDocLoad(); fertig();
+      });
+    });
+  }
   window.addEventListener('resize',function(){ req(); });
 }
 boot();
@@ -5082,7 +5347,13 @@ window.KOSL={
   addToGroup:addToGroup, newGroupFromActive:newGroupFromActive, dissolveGroup:dissolveGroup,
   ensureGroups:ensureGroups, ensureSheet:ensureSheet, resizeDoc:resizeDoc,
   buildSheetWin:buildSheetWin, buildHistWin:buildHistWin, undoLabel:undoLabel,
-  openGroupWin:openGroupWin, layerAlpha:layerAlpha, layerVisible:layerVisible, layerBlend:layerBlend
+  openGroupWin:openGroupWin, layerAlpha:layerAlpha, layerVisible:layerVisible, layerBlend:layerBlend,
+  takeAuftrag:takeAuftrag, runAuftrag:runAuftrag, ladeZuletzt:ladeZuletzt,
+  bildAlsMaterial:bildAlsMaterial, speichernInAblage:speichernInAblage, setPfad:setPfad,
+  get kosPfad(){return kosPfad;}, maskContours:maskContours, syncSelToFloat:syncSelToFloat,
+  discardFloat:discardFloat, guideOrg:guideOrg, guideCenter:guideCenter, liftPix:liftPix,
+  get floatPix(){return floatPix;}, get sel(){return sel;}, set sel(v){sel=v;},
+  gotoHome:gotoHome, gotoFiles:gotoFiles
 };
 </script>
 </body>
