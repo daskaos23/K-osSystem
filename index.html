@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c0e10">
+<title>K-OS</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="brand-mark.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0c0e10; --surf:#14181c; --surf2:#181e23; --line:#232a30; --line2:#333c45;
+  --tx:#eef3f6; --tx2:#93a5ae; --tx3:#66707a;
+  --files:#26b9d9; --studio:#f2af0d; --draw:#d92626; --drawtx:#e05050; --vektor:#26d97a; --lime:#8fd926;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--tx);font-family:'Roboto',system-ui,sans-serif;font-weight:300;
+  -webkit-font-smoothing:antialiased;overflow:hidden;overscroll-behavior:none}
+
+/* ══════════ RAHMEN ══════════ */
+.app{display:flex;height:100%;height:100dvh}
+.spine{width:56px;flex:0 0 56px;display:flex;flex-direction:column;background:#0d1316;z-index:20;
+  padding-bottom:env(safe-area-inset-bottom)}
+.home-btn{height:64px;flex:0 0 64px;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  border:none;background:transparent;position:relative}
+.home-btn img{width:38px;height:38px;transition:transform .18s ease;filter:drop-shadow(0 2px 6px rgba(0,0,0,.55))}
+.home-btn:hover img{transform:scale(1.08)}
+.home-btn.on::after{content:'';position:absolute;right:-1px;top:50%;transform:translateY(-50%);
+  border-top:7px solid transparent;border-bottom:7px solid transparent;border-right:7px solid var(--bg)}
+.seg{position:relative;flex:1;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  user-select:none;-webkit-user-select:none;touch-action:manipulation;background:transparent;border:none}
+.seg .bar{position:absolute;left:0;top:0;bottom:0;background:var(--c);transition:width .2s ease}
+.seg.off .bar{width:7px}
+.seg.off:hover .bar{width:13px}
+.seg.on .bar{width:100%}
+.seg svg.ic{position:relative;z-index:2;width:20px;height:20px;color:rgba(10,10,10,.74);opacity:0;transition:opacity .18s ease}
+.seg.on svg.ic{opacity:1}
+.seg.off:hover svg.ic{opacity:.9;color:var(--c)}
+.seg.on::after{content:'';position:absolute;right:-1px;top:50%;transform:translateY(-50%);
+  border-top:7px solid transparent;border-bottom:7px solid transparent;border-right:7px solid var(--bg)}
+.seg .lbl{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);z-index:2;
+  font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:rgba(10,10,10,.72);opacity:0;transition:opacity .18s ease;writing-mode:vertical-rl;bottom:10px}
+.seg.on .lbl{opacity:1}
+
+/* ══════════ BÜHNE ══════════ */
+.main{flex:1;position:relative;min-width:0}
+.stage{position:absolute;inset:0}
+/* Vollbild — die Linse bringt ihre eigene Leiste mit, die Shell tritt zurück */
+body.full .spine{display:none}
+body.full .app{padding:0}
+.stage iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--bg)}
+.hide{display:none !important}
+.loading{position:absolute;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;
+  background:var(--bg);z-index:5;pointer-events:none;opacity:0;transition:opacity .2s ease}
+.loading.show{opacity:1}
+.loading .mark{position:relative;width:96px;height:96px;display:flex;align-items:center;justify-content:center}
+.loading .mark img{width:64px;height:64px;opacity:.9;animation:pulse 1.4s ease-in-out infinite}
+.loading .mark::after{content:'';position:absolute;inset:0;border-radius:50%;border:3px solid var(--line);
+  border-top-color:var(--lc,#93a5ae);animation:spin .9s linear infinite}
+@keyframes pulse{0%,100%{opacity:.55;transform:scale(.96)}50%{opacity:1;transform:scale(1)}}
+.loading .t{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--tx3)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ══════════ START ══════════ */
+.homewrap{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain}
+.homewrap::before{content:'';position:absolute;top:-60px;right:-140px;width:560px;height:560px;pointer-events:none;
+  background:url('brand-mark-white.png') no-repeat center/contain;opacity:.05}
+.homein{max-width:980px;margin:0 auto;padding:34px 26px 60px}
+.mast{position:relative;background:#f4f4f4;border-radius:14px;padding:34px 26px 26px;display:flex;flex-direction:column;
+  align-items:center;gap:10px;box-shadow:0 18px 44px -22px rgba(0,0,0,.9);overflow:hidden}
+.mast::before{content:'';position:absolute;left:0;right:0;top:0;height:5px;
+  background:linear-gradient(90deg,var(--files) 0 25%,var(--studio) 25% 50%,var(--draw) 50% 75%,var(--vektor) 75% 100%)}
+.mast img.word{width:min(440px,80%);display:block}
+.mast .sub{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:#6a7076}
+.hint{margin:26px 2px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.hint h2{font-family:'Archivo',sans-serif;font-weight:800;font-size:19px;letter-spacing:-.01em}
+.status{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:11px;
+  letter-spacing:.08em;color:var(--tx3)}
+.status .led{width:8px;height:8px;border-radius:50%;background:var(--tx3)}
+.status.ok{color:var(--files)} .status.ok .led{background:var(--files);box-shadow:0 0 8px var(--files)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+.archiv{margin-top:34px;padding-top:22px;border-top:1px solid var(--line)}
+.archiv h3{font:10px 'JetBrains Mono',monospace;letter-spacing:.24em;color:var(--tx3);margin-bottom:7px}
+.archiv p{font-size:12.5px;color:var(--tx3);line-height:1.55;margin-bottom:14px;max-width:660px}
+.archiv .cards{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.card.small{padding:13px 15px}
+.card.small h3{font-size:15px;margin:7px 0 2px}
+.card.small p{display:none}
+.card{position:relative;background:var(--surf);border:1px solid var(--line);border-radius:12px;padding:18px 16px 16px;
+  cursor:pointer;overflow:hidden;transition:transform .15s ease,border-color .15s ease;text-align:left}
+.card:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--c) 55%,var(--line))}
+.card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--c)}
+.card .ic{width:30px;height:30px;color:var(--c);margin-bottom:12px}
+.card h3{font-family:'Archivo',sans-serif;font-weight:800;font-size:17px;color:var(--tx)}
+.card .sicht{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--c);margin:3px 0 10px}
+.card p{font-size:12.8px;color:var(--tx2);line-height:1.5}
+.card .last{position:absolute;top:12px;right:12px;font-family:'JetBrains Mono',monospace;font-size:9px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--c);border:1px solid color-mix(in srgb,var(--c) 40%,transparent);
+  border-radius:4px;padding:2px 6px}
+.foot{margin-top:26px;font-size:12px;color:var(--tx3);line-height:1.7}
+.foot b{color:var(--tx2);font-weight:500}
+.sign{margin-top:22px;display:flex;justify-content:flex-end}
+.sign img{width:150px;opacity:.5}
+.update{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;display:none;align-items:center;gap:14px;
+  background:var(--surf2);border:1px solid var(--line2);border-radius:12px;padding:10px 12px 10px 16px;
+  box-shadow:0 14px 34px -14px rgba(0,0,0,.9);font-size:13px;color:var(--tx2)}
+.update.show{display:flex}
+.update button{border:0;border-radius:8px;background:var(--files);color:#06262e;font-family:'Archivo',sans-serif;
+  font-weight:800;font-size:12.5px;letter-spacing:.03em;padding:8px 14px;cursor:pointer}
+.warnbox{margin:18px 0 0;background:color-mix(in srgb,var(--draw) 12%,var(--surf));border:1px solid color-mix(in srgb,var(--draw) 40%,var(--line));
+  border-radius:10px;padding:12px 14px;font-size:12.8px;color:var(--tx2);display:none}
+.warnbox.show{display:block}
+.warnbox b{color:var(--drawtx)}
+@media (max-width:640px){
+  .spine{width:46px;flex:0 0 46px}
+  .homein{padding:22px 16px 50px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="spine" id="spine">
+    <button class="home-btn on" id="btn-home" title="Start"><img src="brand-mark.png" alt="K-OS"></button>
+  </nav>
+  <div class="main">
+    <div class="homewrap" id="home">
+      <div class="homein">
+        <div class="mast">
+          <img class="word" src="brand-wordmark.png" alt="K-OS">
+          <div class="sub">Ein System &middot; Vier Sichten &middot; <span id="ver"></span></div>
+        </div>
+        <div class="warnbox" id="warn-redirect">
+          <b>Hinweis:</b> Diese Adresse wurde mit einem Login-Code aufgerufen. Der Login geh&ouml;rt zu den Modulen &mdash;
+          bitte in der Dropbox-App-Konsole die Redirect-URI auf <b>&hellip;/files.html</b>
+          stellen (siehe HANDBUCH.md) und den Login erneut starten.
+        </div>
+        <div class="hint">
+          <h2>K-OS</h2>
+          <div class="status" id="dbx-status"><span class="led"></span><span id="dbx-txt">Dropbox: nicht verbunden</span></div>
+        </div>
+        <div class="cards" id="cards"></div>
+
+        <div class="foot">
+          <b>K-OS</b> startet in der <b>Linse</b>: ein Dokument, drei Sichten &mdash; Pixel, Pfade und Layout
+          liegen in einem Stapel, die fremden Sichten scheinen durch. Die <b>Ablage</b> (K-OS Files) verwaltet
+          Projekte in Dropbox, legt neue Dokumente an und ver&ouml;ffentlicht Ausgaben.
+          Wechsel &uuml;ber den <b>cyanfarbenen Streifen</b> links in der Linse (Taste 4), zur&uuml;ck &uuml;ber
+          das <b>K-Zeichen</b> oben links. Tastatur in der Linse: <b>1</b> Pixel, <b>2</b> Pfade, <b>3</b> Layout,
+          <b>4</b> Ablage, <b>0</b> Start, <b>K</b> Befehlsfeld.
+        </div>
+        <div class="sign"><img src="brand-sign.png" alt=""></div>
+      </div>
+    </div>
+    <div class="stage hide" id="stage">
+      <div class="loading" id="loading"><div class="mark"><img src="brand-mark-white.png" alt=""></div><div class="t" id="loading-t">L&auml;dt</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="update" id="update"><span>Eine neue K-OS-Version ist bereit.</span><button id="btn-update">Neu starten</button></div>
+<script>
+'use strict';
+var KOS_VERSION = '1.5';
+document.getElementById('ver').textContent = KOS_VERSION;
+document.title = 'K-OS \u00b7 ' + KOS_VERSION;
+/* ══════════ LINSEN ══════════ */
+var IC = {
+  folder:'<path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+  layout:'<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M12 9.5v10"/>',
+  brush:'<path d="M15.5 3.5l5 5-8.5 8.5H7v-5Z"/><path d="M4 20.5h6"/><path d="M13 6l5 5"/>',
+  pen:'<path d="M4 20l1.6-4.6L16 5a2.1 2.1 0 0 1 3 3L8.6 18.4Z"/><path d="M14 7l3 3"/>'
+};
+function icon(n){
+  return '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(IC[n]||'')+'</svg>';
+}
+var LENS = {
+  linse: {nm:'Linse', sicht:'Ein Dokument \u00b7 drei Sichten', c:'var(--vektor)', icon:'pen', src:'linse.html',
+    p:'Die gemeinsame Arbeitsfl\u00e4che: ein Stapel, Pixel + Pfade + Layout gleichzeitig \u2014 Geister, \u00dcbergaben, Werkzeugrad.'},
+  files: {nm:'Ablage', sicht:'Projekte \u00b7 Dateien \u00b7 Ver\u00f6ffentlichen', c:'var(--files)', icon:'folder', src:'files.html',
+    p:'Projekte in Dropbox: Referenzen, Arbeitsdateien, Exporte und Social \u2014 die Zentrale f\u00fcr die Linse.'}
+};
+var ORDER = ['files'];                       /* Ablage steht neben der Linse */
+var LS_LAST = 'kos_shell_last';
+
+var spine = document.getElementById('spine');
+var stage = document.getElementById('stage');
+var home = document.getElementById('home');
+var loading = document.getElementById('loading');
+var frames = {};          /* geladene iframes je Linse */
+var current = null;       /* aktive Linse oder null = Start */
+
+/* ══════════ AUFBAU ══════════ */
+ORDER.forEach(function(k){
+  var d = LENS[k];
+  var b = document.createElement('button');
+  b.className = 'seg off';
+  b.style.setProperty('--c', d.c);
+  b.dataset.lens = k;
+  b.title = 'K-OS ' + d.nm + ' \u00b7 ' + d.sicht;
+  b.innerHTML = '<span class="bar"></span>' + icon(d.icon) + '<span class="lbl">' + d.nm + '</span>';
+  b.addEventListener('click', function(){ go(k); });
+  spine.appendChild(b);
+});
+var last = null;
+try { last = localStorage.getItem(LS_LAST); } catch (e) {}
+var cards = document.getElementById('cards');
+(function(){
+  var c = document.createElement('button');
+  c.className = 'card';
+  c.style.gridColumn = '1 / -1';
+  c.style.background = 'linear-gradient(120deg,#141a20 0%,#10151a 60%)';
+  c.innerHTML = '<h3 style="background:linear-gradient(90deg,var(--drawtx,#e05050),var(--studio),var(--vektor));-webkit-background-clip:text;background-clip:text;color:transparent">K-OS Linse</h3>'
+    + '<div class="sicht">Ein Dokument \u00b7 drei Sichten</div>'
+    + '<p>' + LENS.linse.p + '</p>';
+  c.style.setProperty('--c','#93a5ae');
+  c.addEventListener('click', function(){ go('linse'); });
+  cards.appendChild(c);
+})();
+ORDER.forEach(function(k){
+  var d = LENS[k];
+  var c = document.createElement('button');
+  c.className = 'card';
+  c.style.setProperty('--c', d.c);
+  c.innerHTML = icon(d.icon) + (k === last ? '<span class="last">Zuletzt</span>' : '') +
+    '<h3>K-OS ' + d.nm + '</h3><div class="sicht">' + d.sicht + '</div><p>' + d.p + '</p>';
+  c.addEventListener('click', function(){ go(k); });
+  cards.appendChild(c);
+});
+document.getElementById('btn-home').addEventListener('click', function(){ go(null); });
+
+/* ══════════ WECHSEL ══════════ */
+function ensureFrame(k, extraQuery){
+  if (frames[k]) return frames[k];
+  var f = document.createElement('iframe');
+  f.src = LENS[k].src + (extraQuery || '');
+  f.allow = 'clipboard-read; clipboard-write; fullscreen';
+  f.title = 'K-OS ' + LENS[k].nm;
+  f.className = 'hide';
+  loading.style.setProperty('--lc', getComputedStyle(document.documentElement).getPropertyValue(
+    {files:'--files',linse:'--vektor'}[k]));
+  document.getElementById('loading-t').textContent = 'K-OS ' + LENS[k].nm + ' l\u00e4dt';
+  loading.classList.add('show');
+  f.addEventListener('load', function(){ f.dataset.loaded = '1'; loading.classList.remove('show'); });
+  stage.appendChild(f);
+  frames[k] = f;
+  return f;
+}
+function go(k, extraQuery){
+  current = k;
+  /* Die Linse läuft im Vollbild — sie hat eigene Leiste, Spine und Start-Knopf */
+  document.body.classList.toggle('full', k === 'linse' || k === 'files');
+  document.getElementById('btn-home').classList.toggle('on', !k);
+  var segs = spine.querySelectorAll('.seg');
+  for (var i = 0; i < segs.length; i++) {
+    var on = segs[i].dataset.lens === k;
+    segs[i].classList.toggle('on', on);
+    segs[i].classList.toggle('off', !on);
+  }
+  if (!k) {
+    stage.classList.add('hide');
+    home.classList.remove('hide');
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    refreshStatus();
+    return;
+  }
+  home.classList.add('hide');
+  stage.classList.remove('hide');
+  var f = ensureFrame(k, extraQuery);
+  for (var key in frames) frames[key].classList.toggle('hide', key !== k);
+  try { localStorage.setItem(LS_LAST, k); } catch (e) {}
+  try { history.replaceState(null, '', location.pathname + '#lens=' + k); } catch (e) {}
+}
+
+/* ══════════ STATUS ══════════ */
+function refreshStatus(){
+  var ok = false;
+  try { ok = !!localStorage.getItem('kosfiles_tokens'); } catch (e) {}
+  var s = document.getElementById('dbx-status');
+  s.classList.toggle('ok', ok);
+  document.getElementById('dbx-txt').textContent = ok ? 'Dropbox: verbunden' : 'Dropbox: nicht verbunden';
+}
+refreshStatus();
+
+/* ══════════ EINSTIEG (Hash / Share / Fehlgeleiteter Login) ══════════ */
+(function boot(){
+  var q = new URLSearchParams(location.search);
+  if (q.get('code') || (location.hash && location.hash.indexOf('access_token=') !== -1)) {
+    document.getElementById('warn-redirect').classList.add('show');
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    return;
+  }
+  if (q.get('share') === '1') { go('files', '?share=1'); return; }
+  var m = /lens=(files|linse)/.exec(location.hash || '');
+  if (m) { go(m[1]); return; }
+  if (q.get('start') === '1') return;          /* ausdrücklich zur Startseite */
+  go('linse');                                  /* K-OS öffnet in der Linse */
+})();
+
+/* Wechsel aus einem Rahmen heraus (Linse ⇄ Ablage) */
+window.addEventListener('hashchange', function(){
+  var m = /lens=(files|linse)/.exec(location.hash || '');
+  if (m) { if (m[1] !== current) go(m[1]); }
+  else if (current) go(null);
+});
+
+/* ══════════ ÜBERGABEN ZWISCHEN LINSEN ══════════ */
+window.addEventListener('message', function(ev){
+  if (ev.origin !== location.origin) return;
+  var d = ev.data;
+  if (d && d.type === 'kos-home') { go(null); return; }     /* Start-Knopf aus der Linse */
+  if (d && d.type === 'kos-auftrag') {                      /* Ablage schickt Arbeit zur Linse */
+    go('linse');
+    var f = frames['linse'];
+    if (f && f.contentWindow) {
+      setTimeout(function(){
+        try { f.contentWindow.postMessage({ type: 'kos-auftrag' }, location.origin); } catch (e) {}
+      }, 40);
+    }
+    return;
+  }
+  if (!d || d.type !== 'kos-handoff') return;
+  var fromUs = false;
+  for (var k in frames) { if (frames[k].contentWindow === ev.source) { fromUs = true; break; } }
+  if (!fromUs) return;
+  var t = d.target;
+  if (t === 'files') {
+    if (frames.files) { frames.files.dataset.loaded = ''; frames.files.src = 'files.html?share=1'; go('files'); }
+    else go('files', '?share=1');
+  } else if (t === 'studio' || t === 'draw' || t === 'vektor') {
+    go(t);
+    var f = frames[t];
+    var send = function(){ try { f.contentWindow.postMessage({ type: 'kos-handoff-receive' }, location.origin); } catch (e) {} };
+    if (f.dataset.loaded === '1') send();
+    else f.addEventListener('load', send, { once: true });
+  }
+});
+
+/* ══════════ TASTATUR (nur Shell-Fokus) ══════════ */
+document.addEventListener('keydown', function(e){
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (e.key === '0') go(null);
+  if (e.key === '1') go('files');
+  if (e.key === '2' || e.key === '5') go('linse');
+});
+
+/* ══════════ SCHLIESSEN-SCHUTZ ══════════ */
+window.addEventListener('beforeunload', function(e){
+  if (frames.draw || frames.vektor || frames.studio) { e.preventDefault(); e.returnValue = ''; }
+});
+
+/* ══════════ PWA ══════════ */
+if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      function offer(w){
+        if (!w) return;
+        document.getElementById('update').classList.add('show');
+        document.getElementById('btn-update').onclick = function(){
+          w.postMessage({ type: 'SKIP_WAITING' });
+        };
+      }
+      if (reg.waiting && navigator.serviceWorker.controller) offer(reg.waiting);
+      reg.addEventListener('updatefound', function(){
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function(){
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) offer(nw);
+        });
+      });
+      var reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function(){
+        if (reloaded) return; reloaded = true; location.reload();
+      });
+    }).catch(function(err){
+      console.warn('Service Worker nicht registriert:', err);
+    });
+  });
+}
+</script>
+</body>
+</html>
